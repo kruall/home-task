@@ -1,5 +1,7 @@
 #pragma once
 
+#include <core/magic_numbers.hpp>
+
 #include <any>
 #include <cstdint>
 #include <memory>
@@ -27,13 +29,13 @@ struct MessageRecord {
 
 inline std::unique_ptr<MessageRecord> MakePingMessage() {
     auto msg = std::make_unique<MessageRecord>();
-    msg->Type_ = (uint32_t)home_task::network_mock::EMessageType::Ping;
+    msg->Type_ = static_cast<uint32_t>(home_task::network_mock::EMessageType::Ping);
     return msg;
 }
 
 inline std::unique_ptr<MessageRecord> MakePongMessage() {
     auto msg = std::make_unique<MessageRecord>();
-    msg->Type_ = (uint32_t)home_task::network_mock::EMessageType::Pong;
+    msg->Type_ = static_cast<uint32_t>(home_task::network_mock::EMessageType::Pong);
     return msg;
 }
 
@@ -41,7 +43,9 @@ inline std::unique_ptr<MessageRecord> MakeStringMessage(const std::string &str) 
     auto msg = std::make_unique<MessageRecord>();
     msg->Type_ = (uint32_t)home_task::network_mock::EMessageType::String;
     msg->Record_ = str;
-    msg->Size_ = str.size();
+    if constexpr (magic_numbers::WithSizeCalculation) {
+        msg->Size_ = str.size();
+    }
     return msg;
 }
 
@@ -63,10 +67,5 @@ public:
     std::optional<std::unique_ptr<MessageRecord>> Receive(uint64_t _mailbox);
 
 };
-
-
-
-
-
 
 }
