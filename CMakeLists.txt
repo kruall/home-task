@@ -6,4 +6,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 
+set(CMAKE_BUILD_TYPE "Release" CACHE INTERNAL "" FORCE)
+
+set(BUILD_SHARED_LIBS OFF)
+set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++ -static")
+
+include_directories(SYSTEM "./src")
+
 add_subdirectory("src")
