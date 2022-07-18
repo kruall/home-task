@@ -1,6 +1,7 @@
 #pragma once
 
-#include <core/magic_numbers.hpp>
+#include "magic_numbers.hpp"
+#include "log.hpp"
 
 #include <any>
 #include <cstdint>
@@ -9,6 +10,7 @@
 #include <queue>
 #include <mutex>
 #include <string>
+#include <condition_variable>
 
 namespace home_task::network_mock {
 
@@ -17,13 +19,19 @@ enum class EMessageType : uint32_t {
     Ping,
     Pong,
     String,
+    Poison,
     PRIVATE = 1024
 };
 
 struct MessageRecord {
     uint32_t Type_;
     std::any Record_;
+    uint64_t Sender_;
     uint64_t Size_ = 0;
+
+    ~MessageRecord() {
+        log::Write("~MessageRecord");
+    }
 };
 
 
@@ -49,12 +57,23 @@ inline std::unique_ptr<MessageRecord> MakeStringMessage(const std::string &str) 
     return msg;
 }
 
+inline std::unique_ptr<MessageRecord> MakePoisonMessage() {
+    auto msg = std::make_unique<MessageRecord>();
+    msg->Type_ = static_cast<uint32_t>(home_task::network_mock::EMessageType::Poison);
+    return msg;
+}
+
 class NetworkMock {
     friend class NetworkClient;
 
     struct MailBox {
         std::queue<std::unique_ptr<MessageRecord>> Queue_;
+        std::condition_variable Notifier_;
         std::mutex Mutex_;
+
+        ~MailBox() {
+            log::Write("~MailBox queue# ", Queue_.size());
+        }
     };
 
     std::vector<std::unique_ptr<MailBox>> MailBoxes_;
@@ -62,9 +81,15 @@ class NetworkMock {
 public:
     NetworkMock(uint32_t _mailBoxCount);
 
-    void Send(uint64_t _receiver, std::unique_ptr<MessageRecord> &&_msg);
+    ~NetworkMock() {
+        log::Write("~NetworkMock");
+    }
+
+    void Send(uint64_t _receiver, uint64_t _sender, std::unique_ptr<MessageRecord> &&_msg);
 
     std::optional<std::unique_ptr<MessageRecord>> Receive(uint64_t _mailbox);
+
+    void WaitMessage(uint64_t _mailbox);
 
 };
 

@@ -10,7 +10,8 @@ NetworkMock::NetworkMock(uint32_t _mailBoxCount) {
     }
 }
 
-void NetworkMock::Send(uint64_t _receiver, std::unique_ptr<MessageRecord> &&_msg) {
+void NetworkMock::Send(uint64_t _receiver, uint64_t _sender, std::unique_ptr<MessageRecord> &&_msg) {
+    _msg->Sender_ = _sender;
     std::lock_guard<std::mutex> guard(MailBoxes_[_receiver]->Mutex_);
     MailBoxes_[_receiver]->Queue_.push(std::move(_msg));
 }
@@ -24,4 +25,10 @@ std::optional<std::unique_ptr<MessageRecord>> NetworkMock::Receive(uint64_t _mai
     auto msg = std::move(queue.front());
     queue.pop();
     return msg;
+}
+
+void NetworkMock::WaitMessage(uint64_t _mailbox) {
+    auto mailBox = MailBoxes_[_mailbox].get();
+    std::unique_lock<std::mutex> lock(mailBox->Mutex_);
+    mailBox->Notifier_.wait(lock, [&]{ return mailBox->Queue_.size(); });
 }

@@ -2,13 +2,13 @@
 #include <iostream>
 #include <string>
 
-
+using namespace home_task;
 
 int main() {
-    home_task::network_mock::NetworkMock network(1);
-    auto msg = home_task::network_mock::MakeStringMessage("Hello world!");
-    network.Send(0, std::move(msg));
-    auto receivedMsg = network.Receive(0);
+    network_mock::NetworkMock network(1);
+    auto msg = network_mock::MakeStringMessage("Hello world!");
+    network.Send(magic_numbers::ServerId, magic_numbers::ServerId, std::move(msg));
+    auto receivedMsg = network.Receive(magic_numbers::ServerId);
     if (!receivedMsg) {
         std::cerr << "ERROR: msg wasn't delivered!\n";
         return 1;

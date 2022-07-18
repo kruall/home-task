@@ -10,7 +10,7 @@
 
 namespace home_task::api {
 
-enum class APIEventsType : uint32_t {
+enum class EAPIEventsType : uint32_t {
     Begin = static_cast<uint32_t>(network_mock::EMessageType::PRIVATE),
     LoadState = Begin,
     UpdateValueRequest,
@@ -24,7 +24,7 @@ enum class APIEventsType : uint32_t {
 };
 
 struct UpdateValueRequest {
-    static constexpr APIEventsType Type_ = APIEventsType::UpdateValueRequest;
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::UpdateValueRequest;
 
     uint32_t CellId_;
     uint32_t Value_;
@@ -36,7 +36,7 @@ struct UpdateValueRequest {
 };
 
 struct InsertValueRequest {
-    static constexpr APIEventsType Type_ = APIEventsType::InsertValueRequest;
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::InsertValueRequest;
 
     uint32_t NearCellId_;
     uint32_t Value_;
@@ -48,7 +48,7 @@ struct InsertValueRequest {
 };
 
 struct DeleteValueRequest {
-    static constexpr APIEventsType Type_ = APIEventsType::DeleteValueRequest;
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::DeleteValueRequest;
 
     uint32_t CellId_;
 
@@ -57,7 +57,7 @@ struct DeleteValueRequest {
 };
 
 struct State {
-    static constexpr APIEventsType Type_ = APIEventsType::State;
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::State;
 
     std::vector<model::Cell> Cells_;
 
@@ -90,11 +90,11 @@ struct GenericResponse {
 };
 
 struct UpdateValueResponse : GenericResponse {
-    static constexpr APIEventsType Type_ = APIEventsType::UpdateValueResponse;
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::UpdateValueResponse;
 };
 
 struct InsertValueResponse : GenericResponse {
-    static constexpr APIEventsType Type_ = APIEventsType::InsertValueResponse;
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::InsertValueResponse;
 
     uint32_t CellId_;
 
@@ -107,14 +107,14 @@ struct InsertValueResponse : GenericResponse {
 };
 
 struct DeleteValueResponse : GenericResponse {
-    static constexpr APIEventsType Type_ = APIEventsType::DeleteValueResponse;
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::DeleteValueResponse;
 };
 
 using MessageRecord = network_mock::MessageRecord;
 
 inline std::unique_ptr<MessageRecord> MakeLoadStateMessage() {
     auto msg = std::make_unique<MessageRecord>();
-    msg->Type_ = static_cast<uint32_t>(APIEventsType::LoadState);
+    msg->Type_ = static_cast<uint32_t>(EAPIEventsType::LoadState);
     return msg;
 }
 
