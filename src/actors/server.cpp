@@ -11,39 +11,48 @@ using namespace home_task::api;
 
 
 void ServerRunner::UpdateValue(UpdateValueRequest *_request, uint64_t _sender) {
-    log::Write("UpdateValue");
-    Client_.Send(_sender, MakeResponseMessage<UpdateValueResponse>(State_->UpdateValue(*_request)));
+    State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
+    auto response = State_->UpdateValue(*_request);
+    response.Modificatoins_ = State_->GetNextHistory(_sender);
+    response.Iteration_ = State_->GetIteration();
+    Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
 
 void ServerRunner::InsertValue(InsertValueRequest *_request, uint64_t _sender) {
-    log::Write("InsertValue");
-    Client_.Send(_sender, MakeResponseMessage<InsertValueResponse>(State_->InsertValue(*_request)));
+    State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
+    auto response = State_->InsertValue(*_request);
+    response.Modificatoins_ = State_->GetNextHistory(_sender);
+    response.Iteration_ = State_->GetIteration();
+    Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
 
 void ServerRunner::DeleteValue(DeleteValueRequest *_request, uint64_t _sender) {
-    log::Write("DeleteValue");
-    Client_.Send(_sender, MakeResponseMessage<DeleteValueResponse>(State_->DeleteValue(*_request)));
+    State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
+    auto response = State_->DeleteValue(*_request);
+    response.Modificatoins_ = State_->GetNextHistory(_sender);
+    response.Iteration_ = State_->GetIteration();
+    Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
 
 void ServerRunner::LoadState(uint64_t _sender) {
-    log::Write("LoadState");
-    Client_.Send(_sender, MakeResponseMessage<State>(State_->LoadState()));
+    auto state = State_->LoadState();
+    state.Iteration_ = State_->GetIteration();
+    Client_.Send(_sender, MakeResponseMessage(state));
 }
 
 void ServerRunner::Run() {
-    log::Write("ServerRunner::Run");
+    log::WriteServerRunner("ServerRunner::Run");
     for (;;) {
-        auto messageOpt = Client_.Receive();
-        if (!messageOpt) {
-            log::Write("ServerRunner::Run{WaitMessage}");
-            Client_.WaitMessage();
-            continue;
-        }
-        auto &message = *messageOpt;
+        auto startReceiving = std::chrono::steady_clock::now();
+        auto message = Client_.ReceiveWithWaiting();
+        std::chrono::duration<double> durationOfReceiving = std::chrono::steady_clock::now() - startReceiving;
+        log::WriteServerRunner("ServerRunner::Run{Wait message ", durationOfReceiving.count(), "s}");
         if (message->Type_ == static_cast<uint32_t>(EMessageType::Poison)) {
-            log::Write("ServerRunner::Run{Poisoned}");
+            log::WriteServerRunner("ServerRunner::Run{Poisoned}");
             break;
         }
+
+        auto startProcessing = std::chrono::steady_clock::now();
         switch (message->Type_) {
         case (uint32_t)EAPIEventsType::UpdateValueRequest:
             UpdateValue(std::any_cast<UpdateValueRequest>(&message->Record_), message->Sender_);
@@ -58,5 +67,7 @@ void ServerRunner::Run() {
             LoadState(message->Sender_);
             break;
         }
+        std::chrono::duration<double> durationOfProcessing = std::chrono::steady_clock::now() - startProcessing;
+        log::WriteServerRunner("ServerRunner::Run{Processing message ", durationOfReceiving.count(), "s}");
     }
 }

@@ -26,11 +26,13 @@ enum class EAPIEventsType : uint32_t {
 struct UpdateValueRequest {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::UpdateValueRequest;
 
-    uint32_t CellId_;
+    uint64_t PreviousIteration_ = 0;
+    uint64_t CellId_;
     uint32_t Value_;
 
-    UpdateValueRequest(uint32_t _cellId, uint32_t _value)
-        : CellId_(_cellId)
+    UpdateValueRequest(uint64_t _cellId, uint32_t _value, uint64_t _iteration)
+        : PreviousIteration_(_iteration)
+        , CellId_(_cellId)
         , Value_(_value)
     {}
 };
@@ -38,11 +40,13 @@ struct UpdateValueRequest {
 struct InsertValueRequest {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::InsertValueRequest;
 
-    uint32_t NearCellId_;
+    uint64_t PreviousIteration_ = 0;
+    uint64_t NearCellId_;
     uint32_t Value_;
 
-    InsertValueRequest(uint32_t _cellId, uint32_t _value)
-        : NearCellId_(_cellId)
+    InsertValueRequest(uint64_t _cellId, uint32_t _value, uint64_t _iteration)
+        : PreviousIteration_(_iteration)
+        , NearCellId_(_cellId)
         , Value_(_value)
     {}
 };
@@ -50,9 +54,12 @@ struct InsertValueRequest {
 struct DeleteValueRequest {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::DeleteValueRequest;
 
-    uint32_t CellId_;
+    uint64_t PreviousIteration_ = 0;
+    uint64_t CellId_;
 
-    DeleteValueRequest(uint32_t _cellId) : CellId_(_cellId)
+    DeleteValueRequest(uint64_t _cellId, uint64_t _iteration)
+        : PreviousIteration_(_iteration)
+        , CellId_(_cellId)
     {}
 };
 
@@ -60,8 +67,9 @@ struct State {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::State;
 
     std::vector<model::Cell> Cells_;
+    uint64_t Iteration_ = 0;
 
-    State(std::vector<model::Cell> &&_cells) : Cells_(_cells)
+    State(std::vector<model::Cell> &&_cells) : Cells_(std::move(_cells))
     {}
 
     uint32_t CalculateSize() const;
@@ -73,15 +81,16 @@ struct GenericResponse {
         model::Cell Cell_;
     };
     struct InsertValue {
-        uint32_t NearCellId_;
+        uint64_t NearCellId_;
         model::Cell Cell_;
     };
     struct DeleteValue {
-        uint32_t CellId_;
+        uint64_t CellId_;
     };
     using Modification = std::variant<UpdateValue, InsertValue, DeleteValue>;
 
     std::vector<Modification> Modificatoins_;
+    uint64_t Iteration_ = 0;
 
     GenericResponse() = default;
     GenericResponse(std::vector<Modification> &&_modifications) : Modificatoins_(_modifications)
@@ -100,11 +109,10 @@ struct UpdateValueResponse : GenericResponse {
 struct InsertValueResponse : GenericResponse {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::InsertValueResponse;
 
-    uint32_t CellId_;
+    uint64_t CellId_;
 
-    InsertValueResponse(uint32_t _cellId, std::vector<Modification> &&_modifications)
-        : GenericResponse(std::move(_modifications))
-        , CellId_(_cellId)
+    InsertValueResponse(uint64_t _cellId)
+        : CellId_(_cellId)
     {}
 
     uint32_t CalculateSize() const;
@@ -124,16 +132,16 @@ inline std::unique_ptr<MessageRecord> MakeLoadStateMessage() {
     return msg;
 }
 
-template <typename _Record>
-constexpr bool IsRequest = std::is_same_v<_Record, UpdateValueRequest>
-    || std::is_same_v<_Record, InsertValueRequest>
-    || std::is_same_v<_Record, DeleteValueRequest>;
+template <typename _Record, typename _Decay_t=std::decay_t<_Record>>
+constexpr bool IsRequest = std::is_same_v<_Decay_t, UpdateValueRequest>
+    || std::is_same_v<_Decay_t, InsertValueRequest>
+    || std::is_same_v<_Decay_t, DeleteValueRequest>;
 
-template <typename _Record>
-constexpr bool IsResponse = std::is_same_v<_Record, State>
-    || std::is_same_v<_Record, UpdateValueResponse>
-    || std::is_same_v<_Record, InsertValueResponse>
-    || std::is_same_v<_Record, DeleteValueResponse>;
+template <typename _Record, typename _Decay_t=std::decay_t<_Record>>
+constexpr bool IsResponse = std::is_same_v<_Decay_t, State>
+    || std::is_same_v<_Decay_t, UpdateValueResponse>
+    || std::is_same_v<_Decay_t, InsertValueResponse>
+    || std::is_same_v<_Decay_t, DeleteValueResponse>;
 
 template <typename _Record, typename ... _Args>
 inline std::unique_ptr<MessageRecord> MakeRequestMessage(_Args&& ... args) {
@@ -147,26 +155,26 @@ inline std::unique_ptr<MessageRecord> MakeRequestMessage(_Args&& ... args) {
     return msg;
 }
 
-template <typename _Record>
+template <typename _Record, typename _Decay_t=std::decay_t<_Record>>
 inline std::unique_ptr<MessageRecord> MakeRequestMessage(_Record&& _record) {
     static_assert(IsRequest<_Record>);
     auto msg = std::make_unique<MessageRecord>();
-    msg->Type_ = static_cast<uint32_t>(_Record::Type_);
-    msg->Record_ = std::make_any<_Record>(std::move(_record));
+    msg->Type_ = static_cast<uint32_t>(_Decay_t::Type_);
+    msg->Record_ = std::make_any<_Decay_t>(std::move(_record));
     if constexpr (magic_numbers::WithSizeCalculation) {
-        msg->Size_ = sizeof(_Record);
+        msg->Size_ = sizeof(_Decay_t);
     }
     return msg;
 }
 
-template <typename _Record>
+template <typename _Record, typename _Decay_t=std::decay_t<_Record>>
 inline std::unique_ptr<MessageRecord> MakeResponseMessage(_Record&& _record) {
     static_assert(IsResponse<_Record>);
     auto msg = std::make_unique<MessageRecord>();
-    msg->Type_ = static_cast<uint32_t>(_Record::Type_);
-    msg->Record_ = std::make_any<_Record>(std::move(_record));
+    msg->Type_ = static_cast<uint32_t>(_Decay_t::Type_);
+    msg->Record_ = std::make_any<_Decay_t>(std::move(_record));
     if constexpr (magic_numbers::WithSizeCalculation) {
-        msg->Size_ = std::any_cast<_Record>(&msg->Record_)->CalculateSize();
+        msg->Size_ = std::any_cast<_Decay_t>(&msg->Record_)->CalculateSize();
     }
     return msg;
 }

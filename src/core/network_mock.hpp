@@ -20,6 +20,7 @@ enum class EMessageType : uint32_t {
     Pong,
     String,
     Poison,
+    Connect,
     PRIVATE = 1024
 };
 
@@ -63,6 +64,12 @@ inline std::unique_ptr<MessageRecord> MakePoisonMessage() {
     return msg;
 }
 
+inline std::unique_ptr<MessageRecord> MakeConnectMessage() {
+    auto msg = std::make_unique<MessageRecord>();
+    msg->Type_ = static_cast<uint32_t>(home_task::network_mock::EMessageType::Connect);
+    return msg;
+}
+
 class NetworkMock {
     friend class NetworkClient;
 
@@ -90,6 +97,8 @@ public:
 
     std::optional<std::unique_ptr<MessageRecord>> Receive(uint64_t _mailbox);
 
+    std::unique_ptr<MessageRecord> ReceiveWithWaiting(uint64_t _mailbox);
+
     void WaitMessage(uint64_t _mailbox);
 
 };
@@ -104,6 +113,8 @@ public:
     void Send(uint64_t _receiver, std::unique_ptr<MessageRecord> &&_msg);
 
     std::optional<std::unique_ptr<MessageRecord>> Receive();
+
+    std::unique_ptr<MessageRecord> ReceiveWithWaiting();
 
     void WaitMessage();
 

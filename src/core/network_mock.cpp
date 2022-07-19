@@ -35,6 +35,15 @@ std::optional<std::unique_ptr<MessageRecord>> NetworkMock::Receive(uint64_t _mai
     return msg;
 }
 
+std::unique_ptr<MessageRecord> NetworkMock::ReceiveWithWaiting(uint64_t _mailbox) {
+    auto msg = Receive(_mailbox);
+    while (!msg) {
+        WaitMessage(_mailbox);
+        msg = Receive(_mailbox);
+    }
+    return std::move(*msg);
+}
+
 void NetworkMock::WaitMessage(uint64_t _mailbox) {
     auto mailBox = MailBoxes_[_mailbox].get();
     log::WriteMutex("NetworkMock::Receive{lock notifier mutex ", _mailbox, '}');
@@ -58,6 +67,11 @@ void NetworkClient::Send(uint64_t _receiver, std::unique_ptr<MessageRecord> &&_m
 std::optional<std::unique_ptr<MessageRecord>> NetworkClient::Receive() {
     log::WriteNetwork("NetworkClient::Receive ", MailBox_);
     return Network_->Receive(MailBox_);
+}
+
+std::unique_ptr<MessageRecord> NetworkClient::ReceiveWithWaiting() {
+    log::WriteNetwork("NetworkClient::ReceiveWithWaiting ", MailBox_);
+    return Network_->ReceiveWithWaiting(MailBox_);
 }
 
 void NetworkClient::WaitMessage() {

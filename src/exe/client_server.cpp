@@ -17,18 +17,31 @@ int main() {
 
     network_mock::NetworkClient networkClient(network, mainThreadId);
 
-    auto serverStateNop = std::make_unique<logic::ServerStateNop>();
+    constexpr uint64_t cellCount = 1'000'000;
+    std::vector<model::Cell> initCells;
+    {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<uint64_t> idDistrib(1);
+        std::uniform_int_distribution<uint32_t> valueDistrib(0);
+        initCells.reserve(cellCount);
+        for (uint64_t idx = 0; idx < cellCount; ++idx) {
+            initCells.emplace_back(idDistrib(gen), valueDistrib(gen));
+        }
+    }
+
+    auto serverState = std::make_unique<logic::ServerState>(initCells);
     std::unique_ptr<actors::ServerRunner> serverRunner = std::make_unique<actors::ServerRunner>(
             network_mock::NetworkClient(network, magic_numbers::ServerId),
-            std::move(serverStateNop));
+            std::move(serverState));
 
     std::vector<std::unique_ptr<actors::ClientRunner>> clientsRunners;
     clientsRunners.reserve(clientCount);
     for (uint32_t idx = 0; idx < clientCount; ++idx) {
-        auto clientStateNop = std::make_unique<logic::ClientStateNop>();
+        auto clientState = std::make_unique<logic::FastSmallClientState>();
         clientsRunners.emplace_back(std::make_unique<actors::ClientRunner>(
                 network_mock::NetworkClient(network, idx + 1),
-                std::move(clientStateNop),
+                std::move(clientState),
                 idx + 1));
     }
 
@@ -39,9 +52,9 @@ int main() {
         clientsThreads.emplace_back(&actors::ClientRunner::Run, clientsRunners[idx].get());
     }
 
-    log::Write("Main thread goes to sleep for 5s");
+    log::Write("Main thread goes to sleep for 100s");
     using namespace std::chrono_literals;
-    std::this_thread::sleep_for(5s);
+    std::this_thread::sleep_for(100s);
     log::Write("Main thread woke up");
 
     networkClient.Send(magic_numbers::ServerId, network_mock::MakePoisonMessage());
@@ -52,6 +65,10 @@ int main() {
     serverThread.join();
     for (auto &thr : clientsThreads) {
         thr.join();
+    }
+
+    for (auto &runner : clientsRunners) {
+        std::cout << runner->PrintStat();
     }
 
     return 0;
