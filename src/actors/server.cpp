@@ -11,30 +11,37 @@ using namespace home_task::api;
 
 
 void ServerRunner::UpdateValue(UpdateValueRequest *_request, uint64_t _sender) {
-
+    log::Write("UpdateValue");
+    Client_.Send(_sender, MakeResponseMessage<UpdateValueResponse>(State_->UpdateValue(*_request)));
 }
 
 void ServerRunner::InsertValue(InsertValueRequest *_request, uint64_t _sender) {
-
+    log::Write("InsertValue");
+    Client_.Send(_sender, MakeResponseMessage<InsertValueResponse>(State_->InsertValue(*_request)));
 }
 
 void ServerRunner::DeleteValue(DeleteValueRequest *_request, uint64_t _sender) {
-
+    log::Write("DeleteValue");
+    Client_.Send(_sender, MakeResponseMessage<DeleteValueResponse>(State_->DeleteValue(*_request)));
 }
 
 void ServerRunner::LoadState(uint64_t _sender) {
-
+    log::Write("LoadState");
+    Client_.Send(_sender, MakeResponseMessage<State>(State_->LoadState()));
 }
 
 void ServerRunner::Run() {
+    log::Write("ServerRunner::Run");
     for (;;) {
-        auto messageOpt = Network_->Receive(MailBox_);
+        auto messageOpt = Client_.Receive();
         if (!messageOpt) {
-            Network_->WaitMessage(MailBox_);
+            log::Write("ServerRunner::Run{WaitMessage}");
+            Client_.WaitMessage();
             continue;
         }
         auto &message = *messageOpt;
         if (message->Type_ == static_cast<uint32_t>(EMessageType::Poison)) {
+            log::Write("ServerRunner::Run{Poisoned}");
             break;
         }
         switch (message->Type_) {

@@ -30,7 +30,7 @@ struct MessageRecord {
     uint64_t Size_ = 0;
 
     ~MessageRecord() {
-        log::Write("~MessageRecord");
+        log::WriteDestructor("~MessageRecord");
     }
 };
 
@@ -69,10 +69,11 @@ class NetworkMock {
     struct MailBox {
         std::queue<std::unique_ptr<MessageRecord>> Queue_;
         std::condition_variable Notifier_;
-        std::mutex Mutex_;
+        std::mutex QueueMutex_;
+        std::mutex NotifierMutex_;
 
         ~MailBox() {
-            log::Write("~MailBox queue# ", Queue_.size());
+            log::WriteDestructor("~MailBox queue# ", Queue_.size());
         }
     };
 
@@ -82,7 +83,7 @@ public:
     NetworkMock(uint32_t _mailBoxCount);
 
     ~NetworkMock() {
-        log::Write("~NetworkMock");
+        log::WriteDestructor("~NetworkMock");
     }
 
     void Send(uint64_t _receiver, uint64_t _sender, std::unique_ptr<MessageRecord> &&_msg);
@@ -90,6 +91,21 @@ public:
     std::optional<std::unique_ptr<MessageRecord>> Receive(uint64_t _mailbox);
 
     void WaitMessage(uint64_t _mailbox);
+
+};
+
+class NetworkClient {
+    std::shared_ptr<NetworkMock> Network_;
+    uint64_t MailBox_;
+
+public:
+    NetworkClient(const std::shared_ptr<network_mock::NetworkMock> &_network, uint32_t _mailBox);
+
+    void Send(uint64_t _receiver, std::unique_ptr<MessageRecord> &&_msg);
+
+    std::optional<std::unique_ptr<MessageRecord>> Receive();
+
+    void WaitMessage();
 
 };
 

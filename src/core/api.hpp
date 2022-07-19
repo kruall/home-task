@@ -83,14 +83,18 @@ struct GenericResponse {
 
     std::vector<Modification> Modificatoins_;
 
+    GenericResponse() = default;
     GenericResponse(std::vector<Modification> &&_modifications) : Modificatoins_(_modifications)
     {}
+
 
     uint32_t CalculateSize() const;
 };
 
 struct UpdateValueResponse : GenericResponse {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::UpdateValueResponse;
+
+    using GenericResponse::GenericResponse;
 };
 
 struct InsertValueResponse : GenericResponse {
@@ -108,6 +112,8 @@ struct InsertValueResponse : GenericResponse {
 
 struct DeleteValueResponse : GenericResponse {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::DeleteValueResponse;
+
+    using GenericResponse::GenericResponse;
 };
 
 using MessageRecord = network_mock::MessageRecord;
@@ -141,12 +147,24 @@ inline std::unique_ptr<MessageRecord> MakeRequestMessage(_Args&& ... args) {
     return msg;
 }
 
-template <typename _Record, typename ... _Args>
-inline std::unique_ptr<MessageRecord> MakeResponseMessage(_Args&& ... args) {
+template <typename _Record>
+inline std::unique_ptr<MessageRecord> MakeRequestMessage(_Record&& _record) {
     static_assert(IsRequest<_Record>);
     auto msg = std::make_unique<MessageRecord>();
     msg->Type_ = static_cast<uint32_t>(_Record::Type_);
-    msg->Record_ = std::make_any<_Record>(std::forward(args)...);
+    msg->Record_ = std::make_any<_Record>(std::move(_record));
+    if constexpr (magic_numbers::WithSizeCalculation) {
+        msg->Size_ = sizeof(_Record);
+    }
+    return msg;
+}
+
+template <typename _Record>
+inline std::unique_ptr<MessageRecord> MakeResponseMessage(_Record&& _record) {
+    static_assert(IsResponse<_Record>);
+    auto msg = std::make_unique<MessageRecord>();
+    msg->Type_ = static_cast<uint32_t>(_Record::Type_);
+    msg->Record_ = std::make_any<_Record>(std::move(_record));
     if constexpr (magic_numbers::WithSizeCalculation) {
         msg->Size_ = std::any_cast<_Record>(&msg->Record_)->CalculateSize();
     }

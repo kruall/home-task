@@ -3,6 +3,7 @@
 #include <core/network_mock.hpp>
 #include <core/api.hpp>
 #include <core/log.hpp>
+#include <logic/server_state.hpp>
 
 #include <memory>
 
@@ -10,17 +11,17 @@
 namespace home_task::actors {
 
 struct ServerRunner {
-    std::shared_ptr<network_mock::NetworkMock> Network_;
-    uint32_t MailBox_;
+    network_mock::NetworkClient Client_;
+    std::unique_ptr<logic::IServerState> State_;
+
+    ServerRunner(network_mock::NetworkClient &&_client, std::unique_ptr<logic::IServerState> &&_state)
+        : Client_(std::move(_client))
+        , State_(std::move(_state))
+    {}
 
     ~ServerRunner() {
-        log::Write("~ServerRunner");
+        log::WriteDestructor("~ServerRunner");
     }
-
-    ServerRunner(const std::shared_ptr<network_mock::NetworkMock> &_network, uint32_t _mailBox)
-        : Network_(_network)
-        , MailBox_(_mailBox)
-    {}
 
     void UpdateValue(api::UpdateValueRequest *_request, uint64_t _sender);
     void InsertValue(api::InsertValueRequest *_request, uint64_t _sender);

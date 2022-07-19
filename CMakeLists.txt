@@ -10,6 +10,11 @@ set(CMAKE_BUILD_TYPE "Release" CACHE INTERNAL "" FORCE)
 
 set(BUILD_SHARED_LIBS OFF)
 
+set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
+set(THREADS_PREFER_PTHREAD_FLAG TRUE)
+
+find_package(Threads REQUIRED)
+
 include_directories(SYSTEM "./src")
 
 add_subdirectory("src")
