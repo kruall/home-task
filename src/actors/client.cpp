@@ -31,6 +31,9 @@ void ClientRunner::Run() {
 
     auto start = std::chrono::steady_clock::now();
     for (IteratoinCount_ = 0;; ++IteratoinCount_) {
+        if (!magic_numbers::CalculateFirstLoadState && IteratoinCount_) {
+            start = std::chrono::steady_clock::now();
+        }
         log::WriteClientRunner("ClientRunner::Run{iteration=", IteratoinCount_, ", start}");
         auto type = IteratoinCount_ ? commandDstrib(gen) : 0;
         std::unique_ptr<MessageRecord> msg;
@@ -51,12 +54,16 @@ void ClientRunner::Run() {
             msg = MakeRequestMessage(State_->GenerateSyncRequest());
             break;
         }
-        SentBytes_ += msg->Size_;
+        if (IteratoinCount_ || magic_numbers::CalculateFirstLoadState || type != LOAD_STATE) {
+            SentBytes_ += msg->Size_;
+        }
         Client_.Send(magic_numbers::ServerId, std::move(msg));
 
         auto startReceiving = std::chrono::steady_clock::now();
         auto message = Client_.ReceiveWithWaiting();
-        ReceivedBytes_ += message->Size_;
+        if (IteratoinCount_ || magic_numbers::CalculateFirstLoadState || type != LOAD_STATE) {
+            ReceivedBytes_ += message->Size_;
+        }
         std::chrono::duration<double> durationOfReceiving = std::chrono::steady_clock::now() - startReceiving;
         log::WriteClientRunner("ClientRunner::Run{Wait response ", durationOfReceiving.count(), "s}");
         if (message->Type_ == static_cast<uint32_t>(EMessageType::Poison)) {

@@ -8,6 +8,7 @@ namespace home_task::magic_numbers {
 constexpr uint64_t ServerId = 0;
 
 constexpr bool WithSizeCalculation = true;
+constexpr bool CalculateFirstLoadState = false;
 constexpr bool WithStateChecking = false;
 
 constexpr bool WithLog = true;
