@@ -31,7 +31,7 @@ void ClientRunner::Run() {
 
     auto start = std::chrono::steady_clock::now();
     for (IteratoinCount_ = 0;; ++IteratoinCount_) {
-        if (!magic_numbers::CalculateFirstLoadState && IteratoinCount_) {
+        if (!magic_numbers::CalculateFirstLoadState && IteratoinCount_ == 1) {
             start = std::chrono::steady_clock::now();
         }
         log::WriteClientRunner("ClientRunner::Run{iteration=", IteratoinCount_, ", start}");
