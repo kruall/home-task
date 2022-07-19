@@ -24,5 +24,6 @@ constexpr bool WithClientRunnerLog = true;
 constexpr bool WithDecardTreeLog = false;
 
 constexpr bool UserSendLoadState = false;
+constexpr bool UserSendSync = true;
 
 }

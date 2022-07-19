@@ -20,11 +20,15 @@ struct IClientState {
 
     virtual api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &_gen) = 0;
 
+    virtual api::SyncRequest GenerateSyncRequest() = 0;
+
     virtual void HandleUpdateValueResponse(const api::UpdateValueResponse &_response) = 0;
 
     virtual void HandleInsertValueResponse(const api::InsertValueResponse &_response) = 0;
 
     virtual void HandleDeleteValueResponse(const api::DeleteValueResponse &_response) = 0;
+
+    virtual void HandleSyncResponse(const api::SyncResponse &_response) = 0;
 
     virtual void HandleState(const api::State &_response) = 0;
 
@@ -33,34 +37,43 @@ struct IClientState {
 struct ClientStateNop : IClientState {
     virtual ~ClientStateNop(){}
 
-    virtual api::UpdateValueRequest GenerateUpdateValueRequest(std::mt19937 &) {
+    api::UpdateValueRequest GenerateUpdateValueRequest(std::mt19937 &) override {
         log::WriteClientState("ClientStateNop::GenerateUpdateValueRequest");
         return api::UpdateValueRequest(0, 0, 0);
     }
 
-    virtual api::InsertValueRequest GenerateInsertValueRequest(std::mt19937 &) {
+    api::InsertValueRequest GenerateInsertValueRequest(std::mt19937 &) override {
         log::WriteClientState("ClientStateNop::GenerateInsertValueRequest");
         return api::InsertValueRequest(0, 0, 0);
     }
 
-    virtual api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &) {
+    api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &) override {
         log::WriteClientState("ClientStateNop::GenerateDeleteValueRequest");
         return api::DeleteValueRequest(0, 0);
     }
 
-    virtual void HandleUpdateValueResponse(const api::UpdateValueResponse &) {
+    api::SyncRequest GenerateSyncRequest() override {
+        log::WriteClientState("ClientStateNop::GenerateSyncRequest");
+        return api::SyncRequest(0);
+    }
+
+    void HandleUpdateValueResponse(const api::UpdateValueResponse &) override {
         log::WriteClientState("ClientStateNop::HandleUpdateValueResponse");
     }
 
-    virtual void HandleInsertValueResponse(const api::InsertValueResponse &) {
+    void HandleInsertValueResponse(const api::InsertValueResponse &) override {
         log::WriteClientState("ClientStateNop::HandleInsertValueResponse");
     }
 
-    virtual void HandleDeleteValueResponse(const api::DeleteValueResponse &) {
+    void HandleDeleteValueResponse(const api::DeleteValueResponse &) override {
         log::WriteClientState("ClientStateNop::HandleDeleteValueResponse");
     }
 
-    virtual void HandleState(const api::State &) {
+    void HandleSyncResponse(const api::SyncResponse &_response) override {
+        log::WriteClientState("ClientStateNop::HandleSyncResponse");
+    }
+
+    void HandleState(const api::State &) override {
         log::WriteClientState("ClientStateNop::HandleState");
     }
 };
@@ -101,6 +114,11 @@ struct ClientState : IClientState {
         return api::DeleteValueRequest(Cells_[id].CellId_, Iteration_);
     }
 
+    api::SyncRequest GenerateSyncRequest() override {
+        log::WriteClientState("ClientState::GenerateSyncRequest");
+        return api::SyncRequest(Iteration_);
+    }
+
     void Update(const std::vector<api::GenericResponse::Modification> &_modifications) {
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
@@ -137,6 +155,12 @@ struct ClientState : IClientState {
 
     void HandleDeleteValueResponse(const api::DeleteValueResponse &_response) override {
         log::WriteClientState("ClientState::HandleDeleteValueResponse");
+        Update(_response.Modificatoins_);
+        Iteration_ = _response.Iteration_;
+    }
+
+    void HandleSyncResponse(const api::SyncResponse &_response) override {
+        log::WriteClientState("ClientState::HandleSyncResponse");
         Update(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
@@ -439,6 +463,11 @@ struct FastClientState : IClientState {
         return api::DeleteValueRequest(id, Iteration_);
     }
 
+    api::SyncRequest GenerateSyncRequest() override {
+        log::WriteClientState("FastClientState::GenerateSyncRequest");
+        return api::SyncRequest(Iteration_);
+    }
+
     void Update(const std::vector<api::GenericResponse::Modification> &_modifications) {
         log::WriteClientState("FastClientState::Update ", _modifications.size());
         auto update = [&] (auto cmd) {
@@ -508,6 +537,12 @@ struct FastClientState : IClientState {
         Iteration_ = _response.Iteration_;
     }
 
+    void HandleSyncResponse(const api::SyncResponse &_response) override {
+        log::WriteClientState("FastClientState::HandleSyncResponse");
+        Update(_response.Modificatoins_);
+        Iteration_ = _response.Iteration_;
+    }
+
     void HandleState(const api::State &_response) override {
         log::WriteClientState("FastClientState::HandleState");
         if (Cells_.Size_ == 1) {
@@ -528,8 +563,6 @@ struct FastClientState : IClientState {
         }
     }
 };
-
-
 
 
 struct FastSmallClientState : IClientState {
@@ -589,6 +622,11 @@ struct FastSmallClientState : IClientState {
         return api::DeleteValueRequest(id, Iteration_);
     }
 
+    api::SyncRequest GenerateSyncRequest() override {
+        log::WriteClientState("FastSmallClientState::GenerateSyncRequest");
+        return api::SyncRequest(Iteration_);
+    }
+
     void Update(const std::vector<api::GenericResponse::Modification> &_modifications) {
         log::WriteClientState("FastSmallClientState::Update ", _modifications.size());
         auto update = [&] (auto cmd) {
@@ -625,6 +663,12 @@ struct FastSmallClientState : IClientState {
         Iteration_ = _response.Iteration_;
     }
 
+    void HandleSyncResponse(const api::SyncResponse &_response) override {
+        log::WriteClientState("FastSmallClientState::HandleSyncResponse");
+        Update(_response.Modificatoins_);
+        Iteration_ = _response.Iteration_;
+    }
+
     void HandleState(const api::State &_response) override {
         log::WriteClientState("FastSmallClientState::HandleState");
         if (CellIds_.empty()) {
@@ -638,5 +682,4 @@ struct FastSmallClientState : IClientState {
     }
 };
 
-
-};
+}

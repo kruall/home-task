@@ -16,11 +16,13 @@ enum class EAPIEventsType : uint32_t {
     UpdateValueRequest,
     InsertValueRequest,
     DeleteValueRequest,
+    SyncRequest,
 
     State = Begin + 1024,
     UpdateValueResponse,
     InsertValueResponse,
     DeleteValueResponse,
+    SyncResponse,
 };
 
 struct UpdateValueRequest {
@@ -60,6 +62,16 @@ struct DeleteValueRequest {
     DeleteValueRequest(uint64_t _cellId, uint64_t _iteration)
         : PreviousIteration_(_iteration)
         , CellId_(_cellId)
+    {}
+};
+
+struct SyncRequest {
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::SyncRequest;
+
+    uint64_t PreviousIteration_ = 0;
+
+    SyncRequest(uint64_t _iteration)
+        : PreviousIteration_(_iteration)
     {}
 };
 
@@ -124,6 +136,12 @@ struct DeleteValueResponse : GenericResponse {
     using GenericResponse::GenericResponse;
 };
 
+struct SyncResponse : GenericResponse {
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::SyncResponse;
+
+    using GenericResponse::GenericResponse;
+};
+
 using MessageRecord = network_mock::MessageRecord;
 
 inline std::unique_ptr<MessageRecord> MakeLoadStateMessage() {
@@ -135,13 +153,15 @@ inline std::unique_ptr<MessageRecord> MakeLoadStateMessage() {
 template <typename _Record, typename _Decay_t=std::decay_t<_Record>>
 constexpr bool IsRequest = std::is_same_v<_Decay_t, UpdateValueRequest>
     || std::is_same_v<_Decay_t, InsertValueRequest>
-    || std::is_same_v<_Decay_t, DeleteValueRequest>;
+    || std::is_same_v<_Decay_t, DeleteValueRequest>
+    || std::is_same_v<_Decay_t, SyncRequest>;
 
 template <typename _Record, typename _Decay_t=std::decay_t<_Record>>
 constexpr bool IsResponse = std::is_same_v<_Decay_t, State>
     || std::is_same_v<_Decay_t, UpdateValueResponse>
     || std::is_same_v<_Decay_t, InsertValueResponse>
-    || std::is_same_v<_Decay_t, DeleteValueResponse>;
+    || std::is_same_v<_Decay_t, DeleteValueResponse>
+    || std::is_same_v<_Decay_t, SyncResponse>;
 
 template <typename _Record, typename ... _Args>
 inline std::unique_ptr<MessageRecord> MakeRequestMessage(_Args&& ... args) {

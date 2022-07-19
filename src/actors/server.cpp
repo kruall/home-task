@@ -37,7 +37,15 @@ void ServerRunner::DeleteValue(DeleteValueRequest *_request, uint64_t _sender) {
 void ServerRunner::LoadState(uint64_t _sender) {
     auto state = State_->LoadState();
     state.Iteration_ = State_->GetIteration();
-    Client_.Send(_sender, MakeResponseMessage(state));
+    Client_.Send(_sender, MakeResponseMessage(std::move(state)));
+}
+
+void ServerRunner::Sync(SyncRequest *_request, uint64_t _sender) {
+    State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
+    api::SyncResponse response;
+    response.Modificatoins_ = State_->GetNextHistory(_sender);
+    response.Iteration_ = State_->GetIteration();
+    Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
 
 void ServerRunner::Run() {
@@ -62,6 +70,9 @@ void ServerRunner::Run() {
             break;
         case (uint32_t)EAPIEventsType::DeleteValueRequest:
             DeleteValue(std::any_cast<DeleteValueRequest>(&message->Record_), message->Sender_);
+            break;
+        case (uint32_t)EAPIEventsType::SyncRequest:
+            Sync(std::any_cast<SyncRequest>(&message->Record_), message->Sender_);
             break;
         case (uint32_t)EAPIEventsType::LoadState:
             LoadState(message->Sender_);

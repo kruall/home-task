@@ -26,6 +26,7 @@ struct ServerRunner {
     void UpdateValue(api::UpdateValueRequest *_request, uint64_t _sender);
     void InsertValue(api::InsertValueRequest *_request, uint64_t _sender);
     void DeleteValue(api::DeleteValueRequest *_request, uint64_t _sender);
+    void Sync(api::SyncRequest *_request, uint64_t _sender);
     void LoadState(uint64_t _sender);
     void Run();
 };

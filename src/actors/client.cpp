@@ -15,9 +15,6 @@ void ClientRunner::Run() {
     std::random_device rd;
     std::mt19937 gen(rd());
     // 0 - LoadState | 1 - UpdateValue | 2 - InsertValue | 3 - DeleteValue | 4 - Sync
-
-    std::uniform_int_distribution<> commandDstrib(!magic_numbers::UserSendLoadState, 3);
-
     enum {
         LOAD_STATE = 0,
         UPDATE_VALUE,
@@ -25,6 +22,11 @@ void ClientRunner::Run() {
         DELETE_VALUE,
         SYNC
     };
+
+    auto leftRangeBorder = magic_numbers::UserSendLoadState ? LOAD_STATE : UPDATE_VALUE;
+    auto rightRangeBorder = magic_numbers::UserSendSync ? SYNC : DELETE_VALUE;
+
+    std::uniform_int_distribution<> commandDstrib(leftRangeBorder, rightRangeBorder);
 
     Client_.Send(magic_numbers::ServerId, MakeConnectMessage());
 
@@ -45,6 +47,9 @@ void ClientRunner::Run() {
             break;
         case DELETE_VALUE:
             msg = MakeRequestMessage(State_->GenerateDeleteValueRequest(gen));
+            break;
+        case SYNC:
+            msg = MakeRequestMessage(State_->GenerateSyncRequest());
             break;
         }
         SentBytes_ += msg->Size_;
@@ -72,6 +77,9 @@ void ClientRunner::Run() {
         case (uint32_t)EAPIEventsType::DeleteValueResponse:
             State_->HandleDeleteValueResponse(*std::any_cast<DeleteValueResponse>(&message->Record_));
             break;
+        case (uint32_t)EAPIEventsType::SyncResponse:
+            State_->HandleSyncResponse(*std::any_cast<SyncResponse>(&message->Record_));
+            break;
         case (uint32_t)EAPIEventsType::State:
             State_->HandleState(*std::any_cast<State>(&message->Record_));
             break;
@@ -82,4 +90,33 @@ void ClientRunner::Run() {
         std::this_thread::sleep_for(200ms);
     }
     WorkTime_ = std::chrono::steady_clock::now() - start;
+}
+
+std::string ClientRunner::PrettyMemory(double _mem) const {
+    std::ostringstream sout;
+    sout << std::fixed << std::setprecision(2);
+    if (_mem > 1e9) {
+        sout << _mem / 1e9 << "GB";
+    } else if (_mem > 1e6) {
+        sout << _mem / 1e6 << "MB";
+    } else if (_mem > 1e3) {
+        sout << _mem / 1e3 << "kB";
+    } else {
+        sout << _mem << "B";
+    }
+    return sout.str();
+}
+
+std::string ClientRunner::PrintStat() const {
+    std::ostringstream sout;
+    sout << std::fixed << std::setprecision(2);
+    sout << "Id# "  << Id_
+        << " SentBytes# " << PrettyMemory(SentBytes_)
+        << " ReceivedBytes# " << PrettyMemory(ReceivedBytes_) << std::endl;
+    sout << " SBPS# " << PrettyMemory(SentBytes_ / WorkTime_.count()) << "/s"
+        << " RBPS# " << PrettyMemory(ReceivedBytes_ / WorkTime_.count()) << "/s" << std::endl;
+    sout << " Iterations# " << IteratoinCount_
+        << " IterationsPerSecond# " << IteratoinCount_ / WorkTime_.count()
+        << " WorkTime# " << WorkTime_.count() << 's' << std::endl;
+    return sout.str();
 }
