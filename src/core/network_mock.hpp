@@ -53,7 +53,7 @@ inline std::unique_ptr<MessageRecord> MakeStringMessage(const std::string &str) 
     msg->Type_ = (uint32_t)home_task::network_mock::EMessageType::String;
     msg->Record_ = str;
     if constexpr (magic_numbers::WithSizeCalculation) {
-        msg->Size_ = str.size();
+        msg->Size_ = str.size() + sizeof(MessageRecord) + sizeof(std::string);
     }
     return msg;
 }
@@ -61,12 +61,18 @@ inline std::unique_ptr<MessageRecord> MakeStringMessage(const std::string &str) 
 inline std::unique_ptr<MessageRecord> MakePoisonMessage() {
     auto msg = std::make_unique<MessageRecord>();
     msg->Type_ = static_cast<uint32_t>(home_task::network_mock::EMessageType::Poison);
+    if constexpr (magic_numbers::WithSizeCalculation) {
+        msg->Size_ = sizeof(MessageRecord);
+    }
     return msg;
 }
 
 inline std::unique_ptr<MessageRecord> MakeConnectMessage() {
     auto msg = std::make_unique<MessageRecord>();
     msg->Type_ = static_cast<uint32_t>(home_task::network_mock::EMessageType::Connect);
+    if constexpr (magic_numbers::WithSizeCalculation) {
+        msg->Size_ = sizeof(MessageRecord);
+    }
     return msg;
 }
 

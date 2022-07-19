@@ -14,13 +14,12 @@ void ClientRunner::Run() {
 
     std::random_device rd;
     std::mt19937 gen(rd());
-    // 0 - LoadState | 1 - UpdateValue | 2 - InsertValue | 3 - DeleteValue | 4 - Sync
     enum {
         LOAD_STATE = 0,
-        UPDATE_VALUE,
-        INSERT_VALUE,
-        DELETE_VALUE,
-        SYNC
+        UPDATE_VALUE = 1,
+        INSERT_VALUE = 2,
+        DELETE_VALUE = 3,
+        SYNC = 4,
     };
 
     auto leftRangeBorder = magic_numbers::UserSendLoadState ? LOAD_STATE : UPDATE_VALUE;

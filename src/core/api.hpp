@@ -147,6 +147,9 @@ using MessageRecord = network_mock::MessageRecord;
 inline std::unique_ptr<MessageRecord> MakeLoadStateMessage() {
     auto msg = std::make_unique<MessageRecord>();
     msg->Type_ = static_cast<uint32_t>(EAPIEventsType::LoadState);
+    if constexpr (magic_numbers::WithSizeCalculation) {
+        msg->Size_ = sizeof(MessageRecord);
+    }
     return msg;
 }
 
@@ -170,7 +173,7 @@ inline std::unique_ptr<MessageRecord> MakeRequestMessage(_Args&& ... args) {
     msg->Type_ = static_cast<uint32_t>(_Record::Type_);
     msg->Record_ = std::make_any<_Record>(std::forward(args)...);
     if constexpr (magic_numbers::WithSizeCalculation) {
-        msg->Size_ = sizeof(_Record);
+        msg->Size_ = sizeof(_Record) + sizeof(MessageRecord);
     }
     return msg;
 }
@@ -182,7 +185,7 @@ inline std::unique_ptr<MessageRecord> MakeRequestMessage(_Record&& _record) {
     msg->Type_ = static_cast<uint32_t>(_Decay_t::Type_);
     msg->Record_ = std::make_any<_Decay_t>(std::move(_record));
     if constexpr (magic_numbers::WithSizeCalculation) {
-        msg->Size_ = sizeof(_Decay_t);
+        msg->Size_ = sizeof(_Decay_t) + sizeof(MessageRecord);
     }
     return msg;
 }
@@ -194,7 +197,7 @@ inline std::unique_ptr<MessageRecord> MakeResponseMessage(_Record&& _record) {
     msg->Type_ = static_cast<uint32_t>(_Decay_t::Type_);
     msg->Record_ = std::make_any<_Decay_t>(std::move(_record));
     if constexpr (magic_numbers::WithSizeCalculation) {
-        msg->Size_ = std::any_cast<_Decay_t>(&msg->Record_)->CalculateSize();
+        msg->Size_ = sizeof(_Decay_t) + std::any_cast<_Decay_t>(&msg->Record_)->CalculateSize() + sizeof(MessageRecord);
     }
     return msg;
 }
