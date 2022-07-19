@@ -34,6 +34,10 @@ struct IServerState {
 struct ServerStateNop : IServerState {
     virtual ~ServerStateNop(){}
 
+    ServerStateNop() = default;
+    ServerStateNop(const std::vector<model::Cell> &)
+    {}
+
     api::UpdateValueResponse UpdateValue(const api::UpdateValueRequest &) override {
         log::WriteServerState("ServerStateNop::UpdateValue");
         return api::UpdateValueResponse();
