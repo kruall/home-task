@@ -268,6 +268,10 @@ struct DecardTree {
         return std::exchange(Right_, nullptr);
     }
 
+    void RecalculateSize() {
+        Size_ = 1 + GetLeftSize() + GetRightSize();
+    }
+
     std::pair<Pointer, Pointer> SplitByIndex(uint64_t _idx) {
         log::WriteDecardTree("SplitByIndex ", _idx);
         if (_idx > Size_) {
@@ -276,7 +280,7 @@ struct DecardTree {
         if (_idx == Size_) {
             log::WriteDecardTree("SplitByIndex{Big} ", _idx);
             Parent_ = nullptr;
-            Size_ = 1 + GetLeftSize() + GetRightSize();
+            RecalculateSize();
             return {this, nullptr};
         }
         uint64_t leftSize = GetLeftSize();
@@ -288,12 +292,12 @@ struct DecardTree {
                 TieRight();
                 Parent_ = nullptr;
                 if (right) right->Parent_ = nullptr;
-                Size_ = 1 + GetLeftSize() + GetRightSize();
-                if (right) right->Size_ = 1 + right->GetLeftSize() + right->GetRightSize();
+                RecalculateSize();
+                if (right) right->RecalculateSize();
                 return {this, right};
             } else {
                 Parent_ = nullptr;
-                Size_ = 1 + GetLeftSize() + GetRightSize();
+                RecalculateSize();
                 return {this, nullptr};
             }
         } else {
@@ -304,12 +308,12 @@ struct DecardTree {
                 TieLeft();
                 Parent_ = nullptr;
                 if (left) left->Parent_ = nullptr;
-                Size_ = 1 + GetLeftSize() + GetRightSize();
-                if (left) left->Size_ = 1 + left->GetLeftSize() + left->GetRightSize();;
+                RecalculateSize();
+                if (left) left->RecalculateSize();
                 return {left, this};
             } else {
                 Parent_ = nullptr;
-                Size_ = 1 + GetLeftSize() + GetRightSize();
+                RecalculateSize();
                 return {nullptr, this};
             }
         }
@@ -331,7 +335,7 @@ struct DecardTree {
             _node->Right_ = right;
             _node->TieRight();
             _node->Parent_ = nullptr;
-            _node->Size_ = 1 + _node->GetLeftSize() + _node->GetRightSize();
+            _node->RecalculateSize();
             return _node;
         } else if (_idx <= GetLeftSize()) {
             log::WriteDecardTree("Insert{Left} ", _idx, ' ', GetLeftSize());
@@ -350,7 +354,7 @@ struct DecardTree {
             }
             TieRight();
         }
-        Size_ = 1 + GetLeftSize() + GetRightSize();
+        RecalculateSize();
         Parent_ = nullptr;
         return this;
     }
@@ -363,23 +367,23 @@ struct DecardTree {
         }
         if (Priority_ > _tree->Priority_) {
             if (Right_) {
-                Right_ = Right_->Merge(_tree);
+                Right_ = UntieRight()->Merge(_tree);
             } else {
                 Right_ = _tree;
             }
             TieRight();
             Parent_ = nullptr;
-            Size_ = 1 + GetLeftSize() + GetRightSize();
+            RecalculateSize();
             return this;
         } else {
             if (_tree->Left_) {
-                _tree->Left_ = _tree->Left_->Merge(this);
+                _tree->Left_ = Merge(_tree->UntieLeft());
             } else {
                 _tree->Left_ = this;
             }
             _tree->TieLeft();
             _tree->Parent_ = nullptr;
-            _tree->Size_ = 1 + _tree->GetLeftSize() + _tree->GetRightSize();
+            _tree->RecalculateSize();
             return _tree;
         }
     }
@@ -412,21 +416,19 @@ struct DecardTree {
     std::pair<Pointer, Pointer> Erase(uint64_t _idx) {
         uint64_t leftSize = GetLeftSize();
         if (leftSize == _idx) {
-            auto res = Left_ ? Left_->Merge(Right_) : Right_;
-            Left_ = nullptr;
-            Right_ = nullptr;
+            auto res = Left_ ? UntieLeft()->Merge(UntieRight()) : UntieRight();
             Parent_ = nullptr;
             Size_ = 1;
             return {res, this};
         } else {
             if (leftSize > _idx) {
-                auto [left, erased] = Left_->Erase(_idx);
+                auto [left, erased] = UntieLeft()->Erase(_idx);
                 Left_ = left;
                 TieLeft();
                 Size_--;
                 return {this, erased};
             } else {
-                auto [right, erased] = Right_->Erase(_idx - leftSize - 1);
+                auto [right, erased] = UntieRight()->Erase(_idx - leftSize - 1);
                 Right_ = right;
                 TieRight();
                 Size_--;
@@ -498,7 +500,7 @@ struct FastClientState : IClientState {
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
-                log::WriteClientState("FastClientState::ApplyModifications{UpdateValue}");
+                log::WriteClientState("FastClientState::ApplyModifications{UpdateValue} ", cmd.Cell_.CellId_);
                 auto node = Nodes_[cmd.Cell_.CellId_];
                 if (!node) {
                     log::WriteFastClientState("can't find node ", cmd.Cell_.CellId_);
@@ -506,7 +508,7 @@ struct FastClientState : IClientState {
                 node->Value_.Value_ = cmd.Cell_.Value_;
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
-                log::WriteClientState("FastClientState::ApplyModifications{InsertValue}");
+                log::WriteClientState("FastClientState::ApplyModifications{InsertValue} ", cmd.NearCellId_, ' ', cmd.Cell_.CellId_);
                 uint64_t idx = 0;
                 if (cmd.NearCellId_) {
                     auto node = Nodes_[cmd.NearCellId_];
@@ -522,15 +524,26 @@ struct FastClientState : IClientState {
                 log::WriteFastClientState("after decard");
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
-                log::WriteClientState("FastClientState::ApplyModifications{DeleteValue}");
+                log::WriteClientState("FastClientState::ApplyModifications{DeleteValue} ", cmd.CellId_);
                 auto node = Nodes_[cmd.CellId_];
                 if (!node) {
                     log::WriteFastClientState("can't find node ", cmd.CellId_);
                 }
                 uint64_t idx = node->GetIdx();
+                if (idx) {
+                    log::WriteServerState("FastClientState::ApplyModifications{left neigh} ", Cells_.Get(idx-1)->Value_.CellId_);
+                } else {
+                    log::WriteServerState("FastClientState::ApplyModifications{left neigh} ", 0);
+                }
                 log::WriteFastClientState("idx for erasing ", idx, '/', Cells_.Size_ - 1);
                 Nodes_.erase(cmd.CellId_);
                 auto [root, erased] = Cells_.Erase(idx);
+                log::WriteFastClientState("erase ", erased->Value_.CellId_);
+                if (idx) {
+                    log::WriteServerState("FastClientState::ApplyModifications{left neigh} ", Cells_.Get(idx-1)->Value_.CellId_);
+                } else {
+                    log::WriteServerState("FastClientState::ApplyModifications{left neigh} ", 0);
+                }
                 if (erased) {
                     delete erased;
                 }
@@ -573,6 +586,7 @@ struct FastClientState : IClientState {
         if (Cells_.Size_ == 1) {
             log::WriteClientState("FastClientState::HandleState{Init}");
             for (uint64_t idx = 0; idx < _response.Cells_.size(); ++idx) {
+                log::WriteInit("Init idx=", idx, " id=", _response.Cells_[idx].CellId_);
                 std::unique_ptr<DecardTree<model::Cell>> node(new DecardTree<model::Cell>{
                         .Priority_=GeneratePriority_(Generator_),
                         .Value_=_response.Cells_[idx]});
@@ -584,8 +598,24 @@ struct FastClientState : IClientState {
                     return;
                 }
             }
-
             log::WriteClientState("FastClientState::HandleState{Cells_.size()=", Cells_.Size_ - 1,'}');
+            return;
+        }
+        if (magic_numbers::WithStateChecking) {
+            ApplyModifications(_response.Modificatoins_);
+            if (Cells_.Size_ - 1 != _response.Cells_.size()) {
+                log::ForceWrite("Sizes aren't equal ", Cells_.Size_ - 1, ' ', _response.Cells_.size());
+                std::exit(1);
+            }
+            uint32_t idx = 0;
+            for (auto &cell : _response.Cells_) {
+                auto &value = Cells_.Get(idx)->Value_;
+                if (value != cell) {
+                    log::ForceWrite("Cells aren't equal at ", idx, ' ', value.CellId_, ' ', cell.CellId_);
+                    std::exit(1);
+                }
+                idx++;
+            }
         }
     }
 };
