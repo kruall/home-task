@@ -7,6 +7,7 @@
 #include <deque>
 #include <cassert>
 #include <unordered_set>
+#include <cstdlib>
 
 
 namespace home_task::logic {
@@ -19,6 +20,8 @@ struct IClientState {
     virtual api::InsertValueRequest GenerateInsertValueRequest(std::mt19937 &_gen) = 0;
 
     virtual api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &_gen) = 0;
+
+    virtual api::LoadStateRequest GenerateLoadStateRequest() = 0;
 
     virtual api::SyncRequest GenerateSyncRequest() = 0;
 
@@ -50,6 +53,11 @@ struct ClientStateNop : IClientState {
     api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &) override {
         log::WriteClientState("ClientStateNop::GenerateDeleteValueRequest");
         return api::DeleteValueRequest(0, 0);
+    }
+
+    api::LoadStateRequest GenerateLoadStateRequest() override {
+        log::WriteClientState("ClientStateNop::GenerateLoadState");
+        return api::LoadStateRequest(0);
     }
 
     api::SyncRequest GenerateSyncRequest() override {
@@ -119,6 +127,11 @@ struct ClientState : IClientState {
         return api::SyncRequest(Iteration_);
     }
 
+    api::LoadStateRequest GenerateLoadStateRequest() override {
+        log::WriteClientState("ClientState::GenerateLoadState");
+        return api::LoadStateRequest(Iteration_);
+    }
+
     void ApplyModifications(const std::vector<api::GenericResponse::Modification> &_modifications) {
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
@@ -174,10 +187,17 @@ struct ClientState : IClientState {
             return;
         }
         if (magic_numbers::WithStateChecking) {
-            assert(Cells_.size() == _response.Cells_.size());
+            ApplyModifications(_response.Modificatoins_);
+            if (Cells_.size() != _response.Cells_.size()) {
+                log::ForceWrite("Sizes aren't equal ", Cells_.size(), ' ', _response.Cells_.size());
+                std::exit(1);
+            }
             uint32_t idx = 0;
             for (auto &cell : Cells_) {
-                assert(cell == _response.Cells_[idx]);
+                if (cell != _response.Cells_[idx]) {
+                    log::ForceWrite("Cells aren't equal at ", idx);
+                    std::exit(1);
+                }
                 idx++;
             }
         }
@@ -463,6 +483,11 @@ struct FastClientState : IClientState {
         return api::DeleteValueRequest(id, Iteration_);
     }
 
+    api::LoadStateRequest GenerateLoadStateRequest() override {
+        log::WriteClientState("FastClientState::GenerateLoadState");
+        return api::LoadStateRequest(Iteration_);
+    }
+
     api::SyncRequest GenerateSyncRequest() override {
         log::WriteClientState("FastClientState::GenerateSyncRequest");
         return api::SyncRequest(Iteration_);
@@ -559,6 +584,7 @@ struct FastClientState : IClientState {
                     return;
                 }
             }
+
             log::WriteClientState("FastClientState::HandleState{Cells_.size()=", Cells_.Size_ - 1,'}');
         }
     }
@@ -619,6 +645,11 @@ struct FastSmallClientState : IClientState {
         uint64_t id = CellIds_[idx];
         log::WriteClientState("FastSmallClientState::GenerateDeleteValueRequest{id=", id, '}');
         return api::DeleteValueRequest(id, Iteration_);
+    }
+
+    api::LoadStateRequest GenerateLoadStateRequest() override {
+        log::WriteClientState("FastSmallClientState::GenerateLoadState");
+        return api::LoadStateRequest(Iteration_);
     }
 
     api::SyncRequest GenerateSyncRequest() override {

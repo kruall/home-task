@@ -39,7 +39,7 @@ void ClientRunner::Run() {
         std::unique_ptr<MessageRecord> msg;
         switch (type) {
         case LOAD_STATE:
-            msg = MakeLoadStateMessage();
+            msg = MakeRequestMessage(State_->GenerateLoadStateRequest());
             break;
         case UPDATE_VALUE:
             msg = MakeRequestMessage(State_->GenerateUpdateValueRequest(gen));

@@ -18,7 +18,6 @@ int main() {
             network_mock::NetworkClient(network, magic_numbers::ServerId),
             std::move(serverStateNop));
 
-    network->Send(magic_numbers::ServerId, TestId, api::MakeLoadStateMessage());
     network->Send(magic_numbers::ServerId, TestId, network_mock::MakePoisonMessage());
 
     runner->Run();

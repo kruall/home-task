@@ -19,6 +19,10 @@ struct Logger {
     }
 };
 
+template <typename ... _Args>
+void ForceWrite(_Args&&... _args) {
+    Logger<true>::Write(std::forward<_Args>(_args)...);
+}
 
 template <typename ... _Args>
 void Write(_Args&&... _args) {

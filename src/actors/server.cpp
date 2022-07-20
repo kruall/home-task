@@ -34,8 +34,12 @@ void ServerRunner::DeleteValue(DeleteValueRequest *_request, uint64_t _sender) {
     Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
 
-void ServerRunner::LoadState(uint64_t _sender) {
+void ServerRunner::LoadState(LoadStateRequest *_request, uint64_t _sender) {
+    State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
     auto state = State_->LoadState();
+    if (magic_numbers::WithStateChecking) {
+        state.Modificatoins_ = State_->GetNextHistory(_sender);
+    }
     state.Iteration_ = State_->GetIteration();
     Client_.Send(_sender, MakeResponseMessage(std::move(state)));
 }
@@ -74,8 +78,8 @@ void ServerRunner::Run() {
         case (uint32_t)EAPIEventsType::SyncRequest:
             Sync(std::any_cast<SyncRequest>(&message->Record_), message->Sender_);
             break;
-        case (uint32_t)EAPIEventsType::LoadState:
-            LoadState(message->Sender_);
+        case (uint32_t)EAPIEventsType::LoadStateRequest:
+            LoadState(std::any_cast<LoadStateRequest>(&message->Record_), message->Sender_);
             break;
         }
         std::chrono::duration<double> durationOfProcessing = std::chrono::steady_clock::now() - startProcessing;

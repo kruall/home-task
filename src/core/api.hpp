@@ -12,7 +12,7 @@ namespace home_task::api {
 
 enum class EAPIEventsType : uint32_t {
     Begin = static_cast<uint32_t>(network_mock::EMessageType::PRIVATE),
-    LoadState = Begin,
+    LoadStateRequest = Begin,
     UpdateValueRequest,
     InsertValueRequest,
     DeleteValueRequest,
@@ -23,6 +23,17 @@ enum class EAPIEventsType : uint32_t {
     InsertValueResponse,
     DeleteValueResponse,
     SyncResponse,
+};
+
+
+struct LoadStateRequest {
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::LoadStateRequest;
+
+    uint64_t PreviousIteration_ = 0;
+
+    LoadStateRequest(uint64_t _iteration)
+        : PreviousIteration_(_iteration)
+    {}
 };
 
 struct UpdateValueRequest {
@@ -75,19 +86,6 @@ struct SyncRequest {
     {}
 };
 
-struct State {
-    static constexpr EAPIEventsType Type_ = EAPIEventsType::State;
-
-    std::vector<model::Cell> Cells_;
-    uint64_t Iteration_ = 0;
-
-    State(std::vector<model::Cell> &&_cells) : Cells_(std::move(_cells))
-    {}
-
-    uint32_t CalculateSize() const;
-};
-
-
 struct GenericResponse {
     struct UpdateValue {
         model::Cell Cell_;
@@ -108,6 +106,17 @@ struct GenericResponse {
     GenericResponse(std::vector<Modification> &&_modifications) : Modificatoins_(_modifications)
     {}
 
+    uint32_t CalculateSize() const;
+};
+
+struct State : GenericResponse {
+    static constexpr EAPIEventsType Type_ = EAPIEventsType::State;
+
+    std::vector<model::Cell> Cells_;
+    uint64_t Iteration_ = 0;
+
+    State(std::vector<model::Cell> &&_cells) : Cells_(std::move(_cells))
+    {}
 
     uint32_t CalculateSize() const;
 };
@@ -144,17 +153,10 @@ struct SyncResponse : GenericResponse {
 
 using MessageRecord = network_mock::MessageRecord;
 
-inline std::unique_ptr<MessageRecord> MakeLoadStateMessage() {
-    auto msg = std::make_unique<MessageRecord>();
-    msg->Type_ = static_cast<uint32_t>(EAPIEventsType::LoadState);
-    if constexpr (magic_numbers::WithSizeCalculation) {
-        msg->Size_ = sizeof(MessageRecord);
-    }
-    return msg;
-}
 
 template <typename _Record, typename _Decay_t=std::decay_t<_Record>>
-constexpr bool IsRequest = std::is_same_v<_Decay_t, UpdateValueRequest>
+constexpr bool IsRequest = std::is_same_v<_Decay_t, LoadStateRequest>
+    || std::is_same_v<_Decay_t, UpdateValueRequest>
     || std::is_same_v<_Decay_t, InsertValueRequest>
     || std::is_same_v<_Decay_t, DeleteValueRequest>
     || std::is_same_v<_Decay_t, SyncRequest>;
