@@ -9,7 +9,7 @@ constexpr uint64_t ServerId = 0;
 
 constexpr bool WithSizeCalculation = true;
 constexpr bool CalculateFirstLoadState = false;
-constexpr bool WithStateChecking = true;
+constexpr bool WithStateChecking = false;
 
 constexpr bool WithLog = true;
 constexpr bool WithMutexLog = false;
@@ -26,7 +26,7 @@ constexpr bool WithDecardTreeLog = false;
 constexpr bool WithInitLog = false;
 constexpr bool WithFullStateLog = false;
 
-constexpr bool UserSendLoadState = true;
+constexpr bool UserSendLoadState = false;
 constexpr bool UserSendSync = true;
 
 }
