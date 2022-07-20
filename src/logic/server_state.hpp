@@ -29,6 +29,7 @@ struct IServerState {
 
     virtual void MoveIterationForClient(uint32_t _id, uint64_t _iteration) = 0;
 
+    virtual void CutHistory() = 0;
 };
 
 struct ServerStateNop : IServerState {
@@ -74,6 +75,10 @@ struct ServerStateNop : IServerState {
     void MoveIterationForClient(uint32_t, uint64_t) override {
         log::WriteServerState("ServerStateNop::MoveIterationForClient");
         return;
+    }
+
+    void CutHistory() override {
+
     }
 };
 
@@ -268,29 +273,24 @@ struct ServerState : IServerState {
             return;
         }
         it->second = _iteration;
-        if (OrderedSeenClients_.size() > 2 * LastSeenClients_.size()) {
-            log::WriteServerState("ServerState::MoveIterationForClient{Reorder}");
-            decltype(OrderedSeenClients_) trash;
-            OrderedSeenClients_.swap(trash);
-            for (auto &[id, iteration] : LastSeenClients_) {
-                OrderedSeenClients_.emplace(iteration, id);
+        log::WriteServerState("ServerState::MoveIterationForClient{Clean}");
+        while (OrderedSeenClients_.size()) {
+            auto [iteration, id] = OrderedSeenClients_.top();
+            uint64_t currentLastSeenIteration = LastSeenClients_[id];
+            if (currentLastSeenIteration == iteration) {
+                break;
             }
-        } else {
-            log::WriteServerState("ServerState::MoveIterationForClient{Clean}");
-            while (OrderedSeenClients_.size()) {
-                auto [iteration, id] = OrderedSeenClients_.top();
-                uint64_t currentLastSeenIteration = LastSeenClients_[id];
-                if (currentLastSeenIteration == iteration) {
-                    break;
-                }
-                OrderedSeenClients_.pop();
-                OrderedSeenClients_.emplace(currentLastSeenIteration, id);
+            OrderedSeenClients_.pop();
+            OrderedSeenClients_.emplace(currentLastSeenIteration, id);
 
-            }
-            log::WriteServerState("ServerState::MoveIterationForClient{Cleaned}");
         }
-        Update(OrderedSeenClients_.top().first);
-        return;
+        log::WriteServerState("ServerState::MoveIterationForClient{Cleaned}");
+    }
+
+    void CutHistory() override {
+        if (OrderedSeenClients_.size()) {
+            Update(OrderedSeenClients_.top().first);
+        }
     }
 };
 

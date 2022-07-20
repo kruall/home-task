@@ -80,5 +80,6 @@ void ServerRunner::Run() {
         }
         std::chrono::duration<double> durationOfProcessing = std::chrono::steady_clock::now() - startProcessing;
         log::WriteServerRunner("ServerRunner::Run{Processing message ", durationOfReceiving.count(), "s}");
+        State_->CutHistory();
     }
 }
