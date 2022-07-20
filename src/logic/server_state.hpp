@@ -93,9 +93,9 @@ struct ServerState : IServerState {
     std::unordered_map<uint32_t, uint64_t> LastSeenClients_;
     std::priority_queue<std::pair<uint64_t, uint32_t>> OrderedSeenClients_;
 
-    std::unordered_map<uint64_t, decltype(std::declval<model::Cell>().Value_)> WaitedUpdate_;
-    std::unordered_map<uint64_t, std::deque<model::Cell>> WaitedInsertion_;
-    std::unordered_map<uint64_t, uint64_t> WaitedDeletion_;
+    std::unordered_map<uint64_t, decltype(std::declval<model::Cell>().Value_)> PostponedUpdate_;
+    std::unordered_map<uint64_t, std::deque<model::Cell>> PostponedInsertion_;
+    std::unordered_map<uint64_t, uint64_t> PostponedDeletion_;
 
     uint64_t NextCellId_ = 1;
     
@@ -115,7 +115,7 @@ struct ServerState : IServerState {
         Iteration_++;
         model::Cell cell(_request.CellId_, _request.Value_);
         History_.emplace_back(api::GenericResponse::UpdateValue{.Cell_ = cell});
-        WaitedUpdate_[_request.CellId_] = _request.Value_;
+        PostponedUpdate_[_request.CellId_] = _request.Value_;
         return api::UpdateValueResponse();
     }
 
@@ -125,12 +125,12 @@ struct ServerState : IServerState {
         uint64_t cellId = NextCellId_++;
         model::Cell cell(cellId, _request.Value_);
         uint64_t nearCellId = _request.NearCellId_;
-        auto it = WaitedDeletion_.find(nearCellId);
-        if (it != WaitedDeletion_.end()) {
+        auto it = PostponedDeletion_.find(nearCellId);
+        if (it != PostponedDeletion_.end()) {
             nearCellId = it->second;
         }
         History_.emplace_back(api::GenericResponse::InsertValue{.NearCellId_ = nearCellId, .Cell_ = cell});
-        WaitedInsertion_[nearCellId].push_back(cell);
+        PostponedInsertion_[nearCellId].push_back(cell);
         return api::InsertValueResponse(cellId);
     }
 
@@ -145,11 +145,11 @@ struct ServerState : IServerState {
             toCellId = (--listIterator)->CellId_;
             listIterator++;
         }
-        WaitedDeletion_[_request.CellId_] = toCellId;
+        PostponedDeletion_[_request.CellId_] = toCellId;
         listIterator++;
         while (listIterator != Cells_.end()) {
-            auto deletionIt = WaitedDeletion_.find(listIterator->CellId_);
-            if (deletionIt == WaitedDeletion_.end()) {
+            auto deletionIt = PostponedDeletion_.find(listIterator->CellId_);
+            if (deletionIt == PostponedDeletion_.end()) {
                 break;
             }
             deletionIt->second = toCellId;
@@ -161,17 +161,17 @@ struct ServerState : IServerState {
     api::State LoadState() override {
         log::WriteServerState("ServerState::LoadState");
         std::vector<model::Cell> cells;
-        cells.reserve(Cells_.size() + WaitedInsertion_.size() - WaitedDeletion_.size());
+        cells.reserve(Cells_.size() + PostponedInsertion_.size() - PostponedDeletion_.size());
         for (auto &cell : Cells_) {
-            if (!WaitedDeletion_.count(cell.CellId_)) {
+            if (!PostponedDeletion_.count(cell.CellId_)) {
                 cells.push_back(cell);
-                auto updateIt = WaitedUpdate_.find(cell.CellId_);
-                if (updateIt != WaitedUpdate_.end()) {
+                auto updateIt = PostponedUpdate_.find(cell.CellId_);
+                if (updateIt != PostponedUpdate_.end()) {
                     cells.back().Value_ = updateIt->second;
                 }
             }
-            auto insertIt = WaitedInsertion_.find(cell.CellId_);
-            if (insertIt != WaitedInsertion_.end()) {
+            auto insertIt = PostponedInsertion_.find(cell.CellId_);
+            if (insertIt != PostponedInsertion_.end()) {
                 for (auto &nextCell : insertIt->second) {
                     cells.push_back(nextCell);
                 }
@@ -204,56 +204,56 @@ struct ServerState : IServerState {
         return Iteration_;
     }
 
-    void Update(uint64_t _toIteration) {
-        log::WriteServerState("ServerState::Update ", _toIteration);
+    void ApplyHistory(uint64_t _toIteration) {
+        log::WriteServerState("ServerState::ApplyHistory ", _toIteration);
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
-                log::WriteServerState("ServerState::Update{UpdateValue}");
+                log::WriteServerState("ServerState::ApplyHistory{UpdateValue}");
                 auto idIt = Ids_.find(cmd.Cell_.CellId_);
                 if (idIt == Ids_.end()) {
-                    log::WriteServerState("ServerState::Update{can't find cell}");
+                    log::WriteServerState("ServerState::ApplyHistory{can't find cell}");
                 }
                 auto itCell = idIt->second;
                 itCell->Value_ = cmd.Cell_.Value_;
-                WaitedUpdate_.erase(cmd.Cell_.CellId_);
+                PostponedUpdate_.erase(cmd.Cell_.CellId_);
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
-                log::WriteServerState("ServerState::Update{InsertValue}");
+                log::WriteServerState("ServerState::ApplyHistory{InsertValue}");
                 auto cellIt = Cells_.begin();
                 if (cmd.NearCellId_) {
                     auto idIt = Ids_.find(cmd.NearCellId_);
                     if (idIt == Ids_.end()) {
-                        log::WriteServerState("ServerState::Update{can't find cell ", cmd.NearCellId_,"}");
+                        log::WriteServerState("ServerState::ApplyHistory{can't find cell ", cmd.NearCellId_,"}");
                     }
                     cellIt = idIt->second;
                     cellIt++;
                 }
                 Ids_[cmd.Cell_.CellId_] = Cells_.insert(cellIt, cmd.Cell_);
-                auto wit = WaitedInsertion_.find(cmd.NearCellId_);
-                if (wit == WaitedInsertion_.end()) {
-                    log::WriteServerState("ServerState::Update{can't find waitedInsertion cell}");
+                auto insertionId = PostponedInsertion_.find(cmd.NearCellId_);
+                if (insertionId == PostponedInsertion_.end()) {
+                    log::WriteServerState("ServerState::ApplyHistory{can't find waitedInsertion cell}");
                 }
-                wit->second.pop_front();
-                if (wit->second.empty()) {
-                    WaitedInsertion_.erase(wit);
+                insertionId->second.pop_front();
+                if (insertionId->second.empty()) {
+                    PostponedInsertion_.erase(insertionId);
                 }
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
-                log::WriteServerState("ServerState::Update{DeleteValue ", cmd.CellId_, "}");
+                log::WriteServerState("ServerState::ApplyHistory{DeleteValue ", cmd.CellId_, "}");
                 auto idIt = Ids_.find(cmd.CellId_);
                 if (idIt == Ids_.end()) {
-                    log::WriteServerState("ServerState::Update{can't find cell}");
+                    log::WriteServerState("ServerState::ApplyHistory{can't find cell}");
                 }
                 auto cellIt = idIt->second;
                 Cells_.erase(cellIt);
-                WaitedDeletion_.erase(cmd.CellId_);
+                PostponedDeletion_.erase(cmd.CellId_);
                 Ids_.erase(cmd.CellId_);
             }
         };
         uint64_t end = _toIteration - LastCutIteration_;
         if (History_.size() < end) {
-            log::WriteServerState("ServerState::Update{Overflow}");
+            log::WriteServerState("ServerState::ApplyHistory{Overflow}");
         }
         for (uint64_t idx = 0; idx < end; ++idx) {
             std::visit(update, History_.front());
@@ -289,7 +289,7 @@ struct ServerState : IServerState {
 
     void CutHistory() override {
         if (OrderedSeenClients_.size()) {
-            Update(OrderedSeenClients_.top().first);
+            ApplyHistory(OrderedSeenClients_.top().first);
         }
     }
 };

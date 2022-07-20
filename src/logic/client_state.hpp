@@ -119,7 +119,7 @@ struct ClientState : IClientState {
         return api::SyncRequest(Iteration_);
     }
 
-    void Update(const std::vector<api::GenericResponse::Modification> &_modifications) {
+    void ApplyModifications(const std::vector<api::GenericResponse::Modification> &_modifications) {
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
@@ -143,25 +143,25 @@ struct ClientState : IClientState {
 
     void HandleUpdateValueResponse(const api::UpdateValueResponse &_response) override {
         log::WriteClientState("ClientState::HandleUpdateValueResponse");
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleInsertValueResponse(const api::InsertValueResponse &_response) override {
         log::WriteClientState("ClientState::HandleInsertValueResponse");
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleDeleteValueResponse(const api::DeleteValueResponse &_response) override {
         log::WriteClientState("ClientState::HandleDeleteValueResponse");
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleSyncResponse(const api::SyncResponse &_response) override {
         log::WriteClientState("ClientState::HandleSyncResponse");
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
@@ -468,12 +468,12 @@ struct FastClientState : IClientState {
         return api::SyncRequest(Iteration_);
     }
 
-    void Update(const std::vector<api::GenericResponse::Modification> &_modifications) {
-        log::WriteClientState("FastClientState::Update ", _modifications.size());
+    void ApplyModifications(const std::vector<api::GenericResponse::Modification> &_modifications) {
+        log::WriteClientState("FastClientState::ApplyModifications ", _modifications.size());
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
-                log::WriteClientState("FastClientState::Update{UpdateValue}");
+                log::WriteClientState("FastClientState::ApplyModifications{UpdateValue}");
                 auto node = Nodes_[cmd.Cell_.CellId_];
                 if (!node) {
                     log::WriteFastClientState("can't find node ", cmd.Cell_.CellId_);
@@ -481,7 +481,7 @@ struct FastClientState : IClientState {
                 node->Value_.Value_ = cmd.Cell_.Value_;
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
-                log::WriteClientState("FastClientState::Update{InsertValue}");
+                log::WriteClientState("FastClientState::ApplyModifications{InsertValue}");
                 uint64_t idx = 0;
                 if (cmd.NearCellId_) {
                     auto node = Nodes_[cmd.NearCellId_];
@@ -497,7 +497,7 @@ struct FastClientState : IClientState {
                 log::WriteFastClientState("after decard");
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
-                log::WriteClientState("FastClientState::Update{DeleteValue}");
+                log::WriteClientState("FastClientState::ApplyModifications{DeleteValue}");
                 auto node = Nodes_[cmd.CellId_];
                 if (!node) {
                     log::WriteFastClientState("can't find node ", cmd.CellId_);
@@ -521,25 +521,25 @@ struct FastClientState : IClientState {
 
     void HandleUpdateValueResponse(const api::UpdateValueResponse &_response) override {
         log::WriteClientState("FastClientState::HandleUpdateValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleInsertValueResponse(const api::InsertValueResponse &_response) override {
         log::WriteClientState("FastClientState::HandleInsertValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleDeleteValueResponse(const api::DeleteValueResponse &_response) override {
         log::WriteClientState("FastClientState::HandleDeleteValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleSyncResponse(const api::SyncResponse &_response) override {
         log::WriteClientState("FastClientState::HandleSyncResponse");
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
@@ -563,7 +563,6 @@ struct FastClientState : IClientState {
         }
     }
 };
-
 
 struct FastSmallClientState : IClientState {
     std::vector<uint64_t> CellIds_;
@@ -627,16 +626,16 @@ struct FastSmallClientState : IClientState {
         return api::SyncRequest(Iteration_);
     }
 
-    void Update(const std::vector<api::GenericResponse::Modification> &_modifications) {
-        log::WriteClientState("FastSmallClientState::Update ", _modifications.size());
+    void ApplyModifications(const std::vector<api::GenericResponse::Modification> &_modifications) {
+        log::WriteClientState("FastSmallClientState::ApplyModifications ", _modifications.size());
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
-                log::WriteClientState("FastSmallClientState::Update{InsertValue ", cmd.Cell_.CellId_,"}");
+                log::WriteClientState("FastSmallClientState::ApplyModifications{InsertValue ", cmd.Cell_.CellId_,"}");
                 CellIds_.push_back(cmd.Cell_.CellId_);
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
-                log::WriteClientState("FastSmallClientState::Update{DeleteValue ", cmd.CellId_,"}");
+                log::WriteClientState("FastSmallClientState::ApplyModifications{DeleteValue ", cmd.CellId_,"}");
                 DeletedIds_.insert(cmd.CellId_);
             }
         };
@@ -647,25 +646,25 @@ struct FastSmallClientState : IClientState {
 
     void HandleUpdateValueResponse(const api::UpdateValueResponse &_response) override {
         log::WriteClientState("FastSmallClientState::HandleUpdateValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleInsertValueResponse(const api::InsertValueResponse &_response) override {
         log::WriteClientState("FastSmallClientState::HandleInsertValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleDeleteValueResponse(const api::DeleteValueResponse &_response) override {
         log::WriteClientState("FastSmallClientState::HandleDeleteValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleSyncResponse(const api::SyncResponse &_response) override {
         log::WriteClientState("FastSmallClientState::HandleSyncResponse");
-        Update(_response.Modificatoins_);
+        ApplyModifications(_response.Modificatoins_);
         Iteration_ = _response.Iteration_;
     }
 
