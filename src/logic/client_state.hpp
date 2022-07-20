@@ -95,7 +95,7 @@ struct ClientState : IClientState {
     virtual ~ClientState(){}
 
     api::UpdateValueRequest GenerateUpdateValueRequest(std::mt19937 &_gen) override {
-        std::uniform_int_distribution<> idxDistrib(0, Cells_.size()-1);
+        std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.size()-1);
         auto &cell = Cells_[idxDistrib(_gen)];
         std::uniform_int_distribution<uint32_t> valueDistrib(0);
         uint32_t value = valueDistrib(_gen);
@@ -104,19 +104,19 @@ struct ClientState : IClientState {
     }
 
     api::InsertValueRequest GenerateInsertValueRequest(std::mt19937 &_gen) override {
-        std::uniform_int_distribution<> idxDistrib(0, Cells_.size());
+        std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.size());
         uint64_t cellId = 0;
         if (uint32_t idx = idxDistrib(_gen)) {
             cellId = Cells_[idx - 1].CellId_;
         }
-        std::uniform_int_distribution<> valueDistrib(0);
+        std::uniform_int_distribution<uint32_t> valueDistrib(0);
         uint32_t value = valueDistrib(_gen);
         log::WriteClientState("ClientState::GenerateInsertValueRequest{after=", cellId, ", value=", value, '}');
         return api::InsertValueRequest(cellId, value, Iteration_);
     }
 
     api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &_gen) override {
-        std::uniform_int_distribution<> idxDistrib(0, Cells_.size()-1);
+        std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.size()-1);
         uint64_t id = idxDistrib(_gen);
         log::WriteClientState("ClientState::GenerateDeleteValueRequest{id=", id, '}');
         return api::DeleteValueRequest(Cells_[id].CellId_, Iteration_);
@@ -200,6 +200,7 @@ struct ClientState : IClientState {
                 }
                 idx++;
             }
+            Iteration_ = _response.Iteration_;
         }
     }
 };
@@ -361,11 +362,21 @@ struct DecardTree {
 
     Pointer Merge(Pointer _tree) {
         log::WriteDecardTree("Merge");
+        if (!this) {
+            log::WriteDecardTree("Merge{not this}");
+            std::exit(1);
+            return this;
+        }
         if (!_tree) {
+            log::WriteDecardTree("Merge{not tree}");
             Parent_ = nullptr;
+            log::WriteDecardTree("Merge{untie parrent}");
+            RecalculateSize();
+            log::WriteDecardTree("Merge{recalculate size}");
             return this;
         }
         if (Priority_ > _tree->Priority_) {
+            log::WriteDecardTree("Merge{upper}");
             if (Right_) {
                 Right_ = UntieRight()->Merge(_tree);
             } else {
@@ -376,6 +387,7 @@ struct DecardTree {
             RecalculateSize();
             return this;
         } else {
+            log::WriteDecardTree("Merge{lower}");
             if (_tree->Left_) {
                 _tree->Left_ = Merge(_tree->UntieLeft());
             } else {
@@ -415,10 +427,13 @@ struct DecardTree {
 
     std::pair<Pointer, Pointer> Erase(uint64_t _idx) {
         uint64_t leftSize = GetLeftSize();
+        log::WriteDecardTree("Erase ", _idx , '/', Size_, ' ', leftSize);
         if (leftSize == _idx) {
             auto res = Left_ ? UntieLeft()->Merge(UntieRight()) : UntieRight();
+            log::WriteDecardTree("Erase{merged}");
             Parent_ = nullptr;
             Size_ = 1;
+            log::WriteDecardTree("Erase{merged return}");
             return {res, this};
         } else {
             if (leftSize > _idx) {
@@ -457,8 +472,14 @@ struct FastClientState : IClientState {
     virtual ~FastClientState(){}
 
     api::UpdateValueRequest GenerateUpdateValueRequest(std::mt19937 &_gen) override {
-        std::uniform_int_distribution<> idxDistrib(0, Cells_.Size_-2);
-        auto &cell = Cells_.Get(idxDistrib(_gen))->Value_;
+        log::WriteClientState("FastClientState::GenerateUpdateValueRequest");
+        if (Cells_.Size_ < 2) {
+            log::ForceWrite("FastClientState::GenerateUpdateValueRequest{SMALL SIZE} ", Cells_.Size_);
+            std::exit(1);
+        }
+        std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.Size_-2);
+        auto node = GetNode(idxDistrib(_gen));
+        auto &cell = node->Value_;
         std::uniform_int_distribution<uint32_t> valueDistrib(0);
         uint32_t value = valueDistrib(_gen);
         log::WriteClientState("FastClientState::GenerateUpdateValueRequest{id=", cell.CellId_, ", value=", value, '}');
@@ -466,10 +487,16 @@ struct FastClientState : IClientState {
     }
 
     api::InsertValueRequest GenerateInsertValueRequest(std::mt19937 &_gen) override {
-       std::uniform_int_distribution<> idxDistrib(0, Cells_.Size_-1);
+        log::WriteClientState("FastClientState::GenerateInsertValueRequest");
+        if (Cells_.Size_ < 1) {
+            log::ForceWrite("FastClientState::GenerateInsertValueRequest{SMALL SIZE} ", Cells_.Size_);
+            std::exit(1);
+        }
+       std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.Size_-1);
         uint64_t cellId = 0;
         if (uint32_t idx = idxDistrib(_gen)) {
-            cellId = Cells_.Get(idx - 1)->Value_.CellId_;
+            auto node = GetNode(idx - 1);
+            cellId = node->Value_.CellId_;
         }
         std::uniform_int_distribution<uint32_t> valueDistrib(0);
         uint32_t value = valueDistrib(_gen);
@@ -477,10 +504,30 @@ struct FastClientState : IClientState {
         return api::InsertValueRequest(cellId, value, Iteration_);
     }
 
+    DecardTree<model::Cell>::Pointer GetNode(uint64_t idx)  {
+        log::WriteClientState("FastClientState::GetNode{Cells_.Get start} ", idx, '/',  Cells_.Size_-1);
+        auto node = Cells_.Get(idx);
+        log::WriteClientState("FastClientState::GetNode{Cells_.Get ended}");
+        if (node) {
+            return node;
+        } else {
+            log::WriteClientState("FastClientState::GetNode{can't find node} ", idx, '/', Cells_.Size_-1);
+            std::exit(1);
+            return nullptr;
+        }
+    }
+
     api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &_gen) override {
-        std::uniform_int_distribution<> idxDistrib(0, Cells_.Size_-2);
+        log::WriteClientState("FastClientState::GenerateDeleteValueRequest");
+        if (Cells_.Size_ < 2) {
+            log::ForceWrite("FastClientState::GenerateDeleteValueRequest{SMALL SIZE} ", Cells_.Size_);
+            std::exit(1);
+        }
+        std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.Size_-2);
         uint64_t idx = idxDistrib(_gen);
-        uint64_t id = Cells_.Get(idx - 1)->Value_.CellId_;
+        log::WriteClientState("FastClientState::GenerateDeleteValueRequest{generated idx, find id}");
+        auto node = GetNode(idx);
+        uint64_t id = node->Value_.CellId_;
         log::WriteClientState("FastClientState::GenerateDeleteValueRequest{id=", id, '}');
         return api::DeleteValueRequest(id, Iteration_);
     }
@@ -500,7 +547,7 @@ struct FastClientState : IClientState {
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
-                log::WriteClientState("FastClientState::ApplyModifications{UpdateValue} ", cmd.Cell_.CellId_);
+                log::WriteClientState("FastClientState::ApplyModifications{UpdateValue} ", cmd.Cell_.CellId_, ' ', cmd.Cell_.Value_);
                 auto node = Nodes_[cmd.Cell_.CellId_];
                 if (!node) {
                     log::WriteFastClientState("can't find node ", cmd.Cell_.CellId_);
@@ -599,23 +646,40 @@ struct FastClientState : IClientState {
                 }
             }
             log::WriteClientState("FastClientState::HandleState{Cells_.size()=", Cells_.Size_ - 1,'}');
+            Iteration_ = _response.Iteration_;
             return;
         }
         if (magic_numbers::WithStateChecking) {
             ApplyModifications(_response.Modificatoins_);
             if (Cells_.Size_ - 1 != _response.Cells_.size()) {
                 log::ForceWrite("Sizes aren't equal ", Cells_.Size_ - 1, ' ', _response.Cells_.size());
+                for (uint64_t idx = 0; idx < Cells_.Size_ - 1; ++idx) {
+                    auto &value = Cells_.Get(idx)->Value_;
+                    log::WriteFullStateLog('<', idx, "> ", value.CellId_);
+                }
+                log::ForceWrite("END LIST");
                 std::exit(1);
             }
-            uint32_t idx = 0;
+            uint64_t idx = 0;
             for (auto &cell : _response.Cells_) {
                 auto &value = Cells_.Get(idx)->Value_;
                 if (value != cell) {
-                    log::ForceWrite("Cells aren't equal at ", idx, ' ', value.CellId_, ' ', cell.CellId_);
+                    if (value.CellId_ !=  cell.CellId_) {
+                        log::ForceWrite("Cells aren't equal at ", idx, ' ', value.CellId_, ' ', cell.CellId_);
+                        for (uint64_t idx = 0; idx < Cells_.Size_ - 1; ++idx) {
+                            auto &value = Cells_.Get(idx)->Value_;
+                            log::WriteFullStateLog('<', idx, "> ", value.CellId_);
+                        }
+                        log::ForceWrite("END LIST");
+                    } else {
+                        log::ForceWrite("Cells equal by id at ", idx, ' ', value.CellId_, ' ', cell.CellId_);
+                        log::ForceWrite("Cells aren't equal by value at ", idx, ' ', value.Value_, ' ', cell.Value_);
+                    }
                     std::exit(1);
                 }
                 idx++;
             }
+            Iteration_ = _response.Iteration_;
         }
     }
 };
@@ -651,7 +715,7 @@ struct FastSmallClientState : IClientState {
     }
 
     api::InsertValueRequest GenerateInsertValueRequest(std::mt19937 &_gen) override {
-       std::uniform_int_distribution<> idxDistrib(0, CellIds_.size());
+       std::uniform_int_distribution<uint32_t> idxDistrib(0, CellIds_.size());
         uint64_t cellId = 0;
         uint32_t idx = idxDistrib(_gen);
         while (idx && DeletedIds_.count(CellIds_[idx - 1])) {

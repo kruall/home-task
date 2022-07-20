@@ -91,10 +91,15 @@ struct ServerState : IServerState {
     uint64_t Iteration_ = 0;
 
     std::unordered_map<uint32_t, uint64_t> LastSeenClients_;
-    std::priority_queue<std::pair<uint64_t, uint32_t>> OrderedSeenClients_;
+    std::priority_queue<
+            std::pair<uint64_t, uint32_t>,
+            std::vector<std::pair<uint64_t, uint32_t>>,
+            std::greater<std::pair<uint64_t, uint32_t>>>
+        OrderedSeenClients_;
 
     std::unordered_map<uint64_t, decltype(std::declval<model::Cell>().Value_)> PostponedUpdate_;
-    std::unordered_map<uint64_t, std::deque<model::Cell>> PostponedInsertion_;
+    std::unordered_map<uint64_t, uint64_t> PostponedUpdateCnt_;
+    std::unordered_map<uint64_t, std::deque<api::GenericResponse::InsertValue*>> PostponedInsertion_;
     std::unordered_map<uint64_t, uint64_t> PostponedDeletion_;
 
     uint64_t NextCellId_ = 1;
@@ -102,20 +107,26 @@ struct ServerState : IServerState {
     ServerState(const std::vector<model::Cell> &_cells) {
         log::WriteServerState("ServerState{_cells.size()=", _cells.size(), '}');
         Cells_.insert(Cells_.begin(), _cells.cbegin(), _cells.cend());
-        for (auto it = Cells_.begin(); it != Cells_.end(); ++it) {
+        uint64_t idx = 0;
+        for (auto it = Cells_.begin(); it != Cells_.end(); ++it, ++idx) {
             Ids_[it->CellId_] = it;
             NextCellId_ = std::max(NextCellId_, it->CellId_ + 1);
+            log::WriteInit("ServerInit idx=", idx, " id=", it->CellId_);
         }
     }
 
     virtual ~ServerState(){}
 
     api::UpdateValueResponse UpdateValue(const api::UpdateValueRequest &_request) override {
-        log::WriteServerState("ServerState::UpdateValue");
-        Iteration_++;
-        model::Cell cell(_request.CellId_, _request.Value_);
-        History_.emplace_back(api::GenericResponse::UpdateValue{.Cell_ = cell});
-        PostponedUpdate_[_request.CellId_] = _request.Value_;
+        log::WriteServerState("ServerState::UpdateValue ", _request.CellId_, ' ',_request.Value_);
+        if (!PostponedDeletion_.count(_request.CellId_)) {
+            Iteration_++;
+            model::Cell cell(_request.CellId_, _request.Value_);
+            History_.emplace_back(api::GenericResponse::UpdateValue{.Cell_ = cell});
+            PostponedUpdate_[_request.CellId_] = _request.Value_;
+            PostponedUpdateCnt_[_request.CellId_]++;
+            log::WriteServerState("ServerState::InsertValue{postponed waited ", PostponedUpdateCnt_[_request.CellId_],"}");
+        }
         return api::UpdateValueResponse();
     }
 
@@ -128,61 +139,90 @@ struct ServerState : IServerState {
         auto it = PostponedDeletion_.find(nearCellId);
         if (it != PostponedDeletion_.end()) {
             nearCellId = it->second;
+            log::WriteServerState("ServerState::InsertValue{with deleted nearCell}");
         }
         History_.emplace_back(api::GenericResponse::InsertValue{.NearCellId_ = nearCellId, .Cell_ = cell});
-        PostponedInsertion_[nearCellId].push_back(cell);
+        PostponedInsertion_[nearCellId].push_front(&std::get<api::GenericResponse::InsertValue>(*--History_.end()));
         return api::InsertValueResponse(cellId);
     }
 
     api::DeleteValueResponse DeleteValue(const api::DeleteValueRequest &_request) override {
         log::WriteServerState("ServerState::DeleteValue");
-        Iteration_++;
-        History_.emplace_back(api::GenericResponse::DeleteValue{.CellId_ = _request.CellId_});
-        auto listIterator = Cells_.begin();
-        uint64_t toCellId = 0;
-        if (auto it = Ids_.find(_request.CellId_); it != Ids_.end() && it->second != Cells_.begin()) {
-            auto listIterator = it->second;
-            toCellId = (--listIterator)->CellId_;
-            listIterator++;
-        }
-        PostponedDeletion_[_request.CellId_] = toCellId;
-        listIterator++;
-        while (listIterator != Cells_.end()) {
-            auto deletionIt = PostponedDeletion_.find(listIterator->CellId_);
-            if (deletionIt == PostponedDeletion_.end()) {
-                break;
+        auto delIt = PostponedDeletion_.find(_request.CellId_);
+        if (delIt == PostponedDeletion_.end()) {
+            Iteration_++;
+            History_.emplace_back(api::GenericResponse::DeleteValue{.CellId_ = _request.CellId_});
+            auto listIterator = Cells_.begin();
+            uint64_t toCellId = 0;
+            if (auto it = Ids_.find(_request.CellId_); it != Ids_.end() && it->second != Cells_.begin()) {
+                auto listIterator = it->second;
+                toCellId = (--listIterator)->CellId_;
+                listIterator++;
             }
-            deletionIt->second = toCellId;
+            PostponedDeletion_[_request.CellId_] = toCellId;
             listIterator++;
+            while (listIterator != Cells_.end()) {
+                auto deletionIt = PostponedDeletion_.find(listIterator->CellId_);
+                if (deletionIt == PostponedDeletion_.end()) {
+                    break;
+                }
+                log::WriteServerState("ServerState::DeleteValue{shift}");
+                deletionIt->second = toCellId;
+                listIterator++;
+            }
         }
         return api::DeleteValueResponse();
+    }
+
+    void CheckUpdate(uint64_t _cellId, auto &_cells, uint64_t *_idx) {
+        auto updateIt = PostponedUpdate_.find(_cellId);
+        if (updateIt != PostponedUpdate_.end()) {
+            log::WriteFullStateLog('[', *_idx, "] update value ", _cellId, ' ', updateIt->second);
+            _cells.back().Value_ = updateIt->second;
+        }
+    }
+
+    void AddPostponed(uint64_t _cellId, auto &_cells, uint64_t *_idx) {
+        auto insertIt = PostponedInsertion_.find(_cellId);
+        if (insertIt != PostponedInsertion_.end()) {
+            for (auto &nextCellIt : insertIt->second) {
+                if (!PostponedDeletion_.count(nextCellIt->Cell_.CellId_)) {
+                    _cells.push_back(nextCellIt->Cell_);
+                    CheckUpdate(nextCellIt->Cell_.CellId_, _cells, _idx);
+                    log::WriteFullStateLog('[', *_idx, "] add postponed ", nextCellIt->Cell_.CellId_);
+                    (*_idx)++;
+                    AddPostponed(nextCellIt->Cell_.CellId_, _cells, _idx);
+                } else {
+                    log::WriteFullStateLog('[', *_idx, "] skip postponed ", nextCellIt->Cell_.CellId_);
+                }
+            }
+        }
     }
 
     api::State LoadState() override {
         log::WriteServerState("ServerState::LoadState");
         std::vector<model::Cell> cells;
         cells.reserve(Cells_.size() + PostponedInsertion_.size() - PostponedDeletion_.size());
+        uint64_t idx = 0;
+
+        AddPostponed(0, cells, &idx);
         for (auto &cell : Cells_) {
             if (!PostponedDeletion_.count(cell.CellId_)) {
                 cells.push_back(cell);
-                auto updateIt = PostponedUpdate_.find(cell.CellId_);
-                if (updateIt != PostponedUpdate_.end()) {
-                    cells.back().Value_ = updateIt->second;
-                }
+                CheckUpdate(cell.CellId_, cells, &idx);
+                log::WriteFullStateLog('[', idx, "] add ", cell.CellId_);
+                idx++;
+            } else {
+                log::WriteFullStateLog('[', idx, "] skip ", cell.CellId_);
             }
-            auto insertIt = PostponedInsertion_.find(cell.CellId_);
-            if (insertIt != PostponedInsertion_.end()) {
-                for (auto &nextCell : insertIt->second) {
-                    cells.push_back(nextCell);
-                }
-            }
+            AddPostponed(cell.CellId_, cells, &idx);
         }
         log::WriteServerState("ServerState::LoadState{cells.size()=", cells.size(), '}');
         return api::State(std::move(cells));
     }
 
     void Connect(uint32_t _id) override {
-        log::WriteServerState("ServerState::LoadState");
+        log::WriteServerState("ServerState::Connect");
     }
 
     std::vector<api::GenericResponse::Modification> GetNextHistory(uint32_t _id) override {
@@ -196,7 +236,25 @@ struct ServerState : IServerState {
         uint64_t beginIdx = lastSeenIteration - LastCutIteration_;
         result.reserve(History_.size() - beginIdx);
         auto begin = History_.begin() + beginIdx;
-        result.insert(result.end(), begin, History_.end());
+        for (auto it = begin; it != History_.end(); ++it) {
+            auto change = [&] (auto &cmd) {
+                if constexpr (std::is_same_v<api::GenericResponse::InsertValue, std::decay_t<decltype(cmd)>>) {
+                    log::WriteFullStateLog(">>insert<< ", cmd.NearCellId_, ' ', cmd.Cell_.CellId_);
+                    auto delIt = PostponedDeletion_.find(cmd.NearCellId_);
+                    if (delIt != PostponedDeletion_.end()) {
+                        cmd.NearCellId_ = delIt->second;
+                    }
+                }
+                if constexpr (std::is_same_v<api::GenericResponse::UpdateValue, std::decay_t<decltype(cmd)>>) {
+                    log::WriteFullStateLog(">>update<< ", cmd.Cell_.CellId_, ' ', cmd.Cell_.Value_);
+                }
+                if constexpr (std::is_same_v<api::GenericResponse::DeleteValue, std::decay_t<decltype(cmd)>>) {
+                    log::WriteFullStateLog(">>delete<< ", cmd.CellId_);
+                }
+            };
+            result.push_back(*it);
+            std::visit(change, result.back());
+        }
         return std::move(result);
     }
 
@@ -209,17 +267,24 @@ struct ServerState : IServerState {
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
-                log::WriteServerState("ServerState::ApplyHistory{UpdateValue}");
+                log::WriteServerState("ServerState::ApplyHistory{UpdateValue} ", cmd.Cell_.CellId_, ' ', cmd.Cell_.Value_);
                 auto idIt = Ids_.find(cmd.Cell_.CellId_);
                 if (idIt == Ids_.end()) {
                     log::WriteServerState("ServerState::ApplyHistory{can't find cell}");
+                    std::exit(1);
                 }
                 auto itCell = idIt->second;
                 itCell->Value_ = cmd.Cell_.Value_;
-                PostponedUpdate_.erase(cmd.Cell_.CellId_);
+                if (!--PostponedUpdateCnt_[cmd.Cell_.CellId_]) {
+                    log::WriteServerState("ServerState::ApplyHistory{erase from postponed} ", cmd.Cell_.CellId_);
+                    PostponedUpdate_.erase(cmd.Cell_.CellId_);
+                    PostponedUpdateCnt_.erase(cmd.Cell_.CellId_);
+                } else {
+                    log::WriteServerState("ServerState::ApplyHistory{waited post} ", PostponedUpdateCnt_[cmd.Cell_.CellId_]);
+                }
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
-                log::WriteServerState("ServerState::ApplyHistory{InsertValue}");
+                log::WriteServerState("ServerState::ApplyHistory{InsertValue} ", cmd.Cell_.CellId_);
                 auto cellIt = Cells_.begin();
                 if (cmd.NearCellId_) {
                     auto idIt = Ids_.find(cmd.NearCellId_);
@@ -232,11 +297,13 @@ struct ServerState : IServerState {
                 Ids_[cmd.Cell_.CellId_] = Cells_.insert(cellIt, cmd.Cell_);
                 auto insertionId = PostponedInsertion_.find(cmd.NearCellId_);
                 if (insertionId == PostponedInsertion_.end()) {
-                    log::WriteServerState("ServerState::ApplyHistory{can't find waitedInsertion cell}");
+                    log::WriteServerState("ServerState::ApplyHistory{can't find waitedInsertion cell} ", cmd.NearCellId_);
                 }
-                insertionId->second.pop_front();
+                log::WriteServerState("ServerState::ApplyHistory{pop from postponed} ", insertionId->second.back()->Cell_.CellId_);
+                insertionId->second.pop_back();
                 if (insertionId->second.empty()) {
                     PostponedInsertion_.erase(insertionId);
+                    log::WriteServerState("ServerState::ApplyHistory{remove PostponedInsertion_} ", cmd.NearCellId_);
                 }
             }
             if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
@@ -244,13 +311,27 @@ struct ServerState : IServerState {
                 auto idIt = Ids_.find(cmd.CellId_);
                 if (idIt == Ids_.end()) {
                     log::WriteServerState("ServerState::ApplyHistory{can't find cell}");
+                    std::exit(1);
                 }
                 auto cellIt = idIt->second;
+                if (cellIt != Cells_.begin()) {
+                    cellIt--;
+                    log::WriteServerState("ServerState::ApplyHistory{left neigh} ", cellIt->CellId_);
+                    cellIt++;
+                } else {
+                    log::WriteServerState("ServerState::ApplyHistory{left neigh} ", 0);
+                }
                 Cells_.erase(cellIt);
+                log::WriteServerState("ServerState::ApplyHistory{erased from Cells_} ");
                 PostponedDeletion_.erase(cmd.CellId_);
+                log::WriteServerState("ServerState::ApplyHistory{erased from PostponedDeletion_} ");
                 Ids_.erase(cmd.CellId_);
+                log::WriteServerState("ServerState::ApplyHistory{erased from Ids_} ");
             }
         };
+        if (_toIteration <= LastCutIteration_) {
+            return;
+        }
         uint64_t end = _toIteration - LastCutIteration_;
         if (History_.size() < end) {
             log::WriteServerState("ServerState::ApplyHistory{Overflow}");
@@ -288,8 +369,13 @@ struct ServerState : IServerState {
     }
 
     void CutHistory() override {
+        log::WriteServerState("ServerState::CutHistory");
         if (OrderedSeenClients_.size()) {
-            ApplyHistory(OrderedSeenClients_.top().first);
+            uint64_t iteration = OrderedSeenClients_.top().first;
+            if (iteration) {
+                log::WriteServerState("ServerState::CutHistory{ApplyHistory}");
+                ApplyHistory(OrderedSeenClients_.top().first);
+            }
         }
     }
 };

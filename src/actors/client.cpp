@@ -34,8 +34,9 @@ void ClientRunner::Run() {
         if (!magic_numbers::CalculateFirstLoadState && IteratoinCount_ == 1) {
             start = std::chrono::steady_clock::now();
         }
-        log::WriteClientRunner("ClientRunner::Run{iteration=", IteratoinCount_, ", start}");
-        auto type = IteratoinCount_ ? commandDstrib(gen) : 0;
+        log::WriteClientRunner("ClientRunner::Run{id=", Id_, ", iteration=", IteratoinCount_, ", start}");
+        auto type = (IteratoinCount_ % 2 == 1 || IteratoinCount_ && Id_ != 1) ? commandDstrib(gen) : 0;
+        //auto type = IteratoinCount_ ? commandDstrib(gen) : 0;
         std::unique_ptr<MessageRecord> msg;
         switch (type) {
         case LOAD_STATE:
@@ -65,13 +66,13 @@ void ClientRunner::Run() {
             ReceivedBytes_ += message->Size_;
         }
         std::chrono::duration<double> durationOfReceiving = std::chrono::steady_clock::now() - startReceiving;
-        log::WriteClientRunner("ClientRunner::Run{Wait response ", durationOfReceiving.count(), "s}");
+        log::WriteClientRunner("ClientRunner::Run{id=", Id_, ", Wait response ", durationOfReceiving.count(), "s}");
         if (message->Type_ == static_cast<uint32_t>(EMessageType::Poison)) {
             log::WriteClientRunner("ClientRunner::Run{id=", Id_, ", iteration=", IteratoinCount_, ", Poisoned}");
             break;
         }
 
-        log::WriteClientRunner("ClientRunner::Run{iteration=", IteratoinCount_, ", handling}");
+        log::WriteClientRunner("ClientRunner::Run{id=", Id_, ", iteration=", IteratoinCount_, ", handling}");
         auto startHandling = std::chrono::steady_clock::now();
         switch (message->Type_) {
         case (uint32_t)EAPIEventsType::UpdateValueResponse:

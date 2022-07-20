@@ -4,6 +4,6 @@
 using namespace home_task;
 
 int main() {
-    exe::Test<logic::ServerState, logic::ClientState, 20, 10'000'000>();
+    exe::Test<logic::ServerState, logic::ClientState, 1, 100>();
     return 0;
 }
