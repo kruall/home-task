@@ -121,9 +121,8 @@ struct ServerState : IServerState {
         model::Cell cell(cellId, _request.Value_);
         uint64_t nearCellId = _request.NearCellId_;
         auto it = WaitedDeletion_.find(nearCellId);
-        while (it != WaitedDeletion_.end()) {
+        if (it != WaitedDeletion_.end()) {
             nearCellId = it->second;
-            it = WaitedDeletion_.find(nearCellId);
         }
         History_.emplace_back(api::GenericResponse::InsertValue{.NearCellId_ = nearCellId, .Cell_ = cell});
         WaitedInsertion_[nearCellId].push_back(cell);
