@@ -35,8 +35,7 @@ void ClientRunner::Run() {
             start = std::chrono::steady_clock::now();
         }
         log::WriteClientRunner("ClientRunner::Run{id=", Id_, ", iteration=", IteratoinCount_, ", start}");
-        auto type = (IteratoinCount_ % 2 == 1 || IteratoinCount_ && Id_ != 1) ? commandDstrib(gen) : 0;
-        //auto type = IteratoinCount_ ? commandDstrib(gen) : 0;
+        auto type = IteratoinCount_ ? commandDstrib(gen) : 0;
         std::unique_ptr<MessageRecord> msg;
         switch (type) {
         case LOAD_STATE:
