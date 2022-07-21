@@ -90,36 +90,36 @@ struct ClientStateNop : IClientState {
 
 struct ClientState : IClientState {
     std::deque<model::Cell> Cells_;
-    uint64_t Iteration_ = 0;
+    model::IterationI Iteration_ = 0;
 
     virtual ~ClientState(){}
 
     api::UpdateValueRequest GenerateUpdateValueRequest(std::mt19937 &_gen) override {
         std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.size()-1);
         auto &cell = Cells_[idxDistrib(_gen)];
-        std::uniform_int_distribution<uint32_t> valueDistrib(0);
-        uint32_t value = valueDistrib(_gen);
-        log::WriteClientState("ClientState::GenerateUpdateValueRequest{id=", cell.CellId_, ", value=", value, '}');
+        std::uniform_int_distribution<model::Value> valueDistrib(0);
+        model::Value value = valueDistrib(_gen);
+        lcog::WriteClientState("ClientState::GenerateUpdateValueRequest{id=", cell.CellId_, ", value=", value, '}');
         return api::UpdateValueRequest(cell.CellId_, value, Iteration_);
     }
 
     api::InsertValueRequest GenerateInsertValueRequest(std::mt19937 &_gen) override {
         std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.size());
-        uint64_t cellId = 0;
+        model::CellId cellId = 0;
         if (uint32_t idx = idxDistrib(_gen)) {
             cellId = Cells_[idx - 1].CellId_;
         }
-        std::uniform_int_distribution<uint32_t> valueDistrib(0);
-        uint32_t value = valueDistrib(_gen);
+        std::uniform_int_distribution<model::Value> valueDistrib(0);
+        model::Value value = valueDistrib(_gen);
         log::WriteClientState("ClientState::GenerateInsertValueRequest{after=", cellId, ", value=", value, '}');
         return api::InsertValueRequest(cellId, value, Iteration_);
     }
 
     api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &_gen) override {
         std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.size()-1);
-        uint64_t id = idxDistrib(_gen);
-        log::WriteClientState("ClientState::GenerateDeleteValueRequest{id=", id, '}');
-        return api::DeleteValueRequest(Cells_[id].CellId_, Iteration_);
+        uint32_t idx = idxDistrib(_gen);
+        log::WriteClientState("ClientState::GenerateDeleteValueRequest{id=", Cells_[idx].CellId_, '}');
+        return api::DeleteValueRequest(Cells_[idx].CellId_, Iteration_);
     }
 
     api::SyncRequest GenerateSyncRequest() override {
@@ -132,49 +132,60 @@ struct ClientState : IClientState {
         return api::LoadStateRequest(Iteration_);
     }
 
-    void ApplyModifications(const std::vector<api::GenericResponse::Modification> &_modifications) {
-        auto update = [&] (auto cmd) {
-            using type = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
-                auto it = std::find_if(Cells_.begin(), Cells_.end(), [id=cmd.Cell_.CellId_] (auto &el) { return el.CellId_ == id;});
-                it->Value_ = cmd.Cell_.Value_;
+    void ApplyOperations(const api::GenericResponse &_response) {
+        std::unordered_map<model::CellId, const model::InsertValue*> postponedInserts;
+        for (auto &update : _response.Updates_) {
+            auto it = std::find_if(Cells_.begin(), Cells_.end(), [id=update.Cell_.CellId_] (auto &el) { return el.CellId_ == id;});
+            it->Value_ = update.Cell_.Value_;
+        }
+        for (auto &insert : _response.Insertions_) {
+            if (insert.NearCellId_) {
+                auto it = std::find_if(Cells_.begin(), Cells_.end(), [id=insert.NearCellId_] (auto &el) { return el.CellId_ == id;});
+                if (it == Cells_.end()) {
+                    postponedInserts[insert.NearCellId_] = &insert;
+                } else {
+                    it++;
+                    Cells_.insert(it, insert.Cell_);
+                }
+            } else {
+                Cells_.insert(Cells_.begin(), insert.Cell_);
             }
-            if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
-                auto it = std::find_if(Cells_.begin(), Cells_.end(), [id=cmd.NearCellId_] (auto &el) { return el.CellId_ == id;});
+            auto postponedIt = postponedInserts.find(insert.Cell_.CellId_);
+            while (postponedIt != postponedInserts.end()) {
+                auto it = std::find_if(Cells_.begin(), Cells_.end(), [id=postponedIt->first] (auto &el) { return el.CellId_ == id;});
                 it++;
-                Cells_.insert(it, cmd.Cell_);
+                Cells_.insert(it, postponedIt->second->Cell_);
+                auto next = postponedInserts.find(postponedIt->second->Cell_.CellId_);
+                postponedInserts.erase(std::exchange(postponedIt, next));
             }
-            if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
-                auto it = std::find_if(Cells_.begin(), Cells_.end(), [id=cmd.CellId_] (auto &el) { return el.CellId_ == id;});
-                Cells_.erase(it);
-            }
-        };
-        for (auto &el : _modifications) {
-            std::visit(update, el);
+        }
+        for (auto &del : _response.Deletions_) {
+            auto it = std::find_if(Cells_.begin(), Cells_.end(), [id=del.CellId_] (auto &el) { return el.CellId_ == id;});
+            Cells_.erase(it);
         }
     }
 
     void HandleUpdateValueResponse(const api::UpdateValueResponse &_response) override {
         log::WriteClientState("ClientState::HandleUpdateValueResponse");
-        ApplyModifications(_response.Modificatoins_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleInsertValueResponse(const api::InsertValueResponse &_response) override {
         log::WriteClientState("ClientState::HandleInsertValueResponse");
-        ApplyModifications(_response.Modificatoins_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleDeleteValueResponse(const api::DeleteValueResponse &_response) override {
         log::WriteClientState("ClientState::HandleDeleteValueResponse");
-        ApplyModifications(_response.Modificatoins_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleSyncResponse(const api::SyncResponse &_response) override {
         log::WriteClientState("ClientState::HandleSyncResponse");
-        ApplyModifications(_response.Modificatoins_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
@@ -187,7 +198,7 @@ struct ClientState : IClientState {
             return;
         }
         if (magic_numbers::WithStateChecking) {
-            ApplyModifications(_response.Modificatoins_);
+            ApplyOperations(_response);
             if (Cells_.size() != _response.Cells_.size()) {
                 log::ForceWrite("Sizes aren't equal ", Cells_.size(), ' ', _response.Cells_.size());
                 std::exit(1);
@@ -195,7 +206,16 @@ struct ClientState : IClientState {
             uint32_t idx = 0;
             for (auto &cell : Cells_) {
                 if (cell != _response.Cells_[idx]) {
-                    log::ForceWrite("Cells aren't equal at ", idx);
+                    if (cell.CellId_ !=  _response.Cells_[idx].CellId_) {
+                        log::ForceWrite("Cells aren't equal at ", idx, ' ', cell.CellId_, ' ', _response.Cells_[idx].CellId_);
+                    } else {
+                        log::ForceWrite("Cells equal by id at ", idx, ' ', cell.CellId_, ' ', _response.Cells_[idx].CellId_);
+                        log::ForceWrite("Cells aren't equal by value at ", idx, ' ', cell.Value_, ' ', _response.Cells_[idx].Value_);
+                    }
+                    for (uint32_t idx2 = 0; idx2 < Cells_.size(); ++idx2) {
+                        log::WriteFullStateLog('<', idx2, "> ", Cells_[idx2].CellId_);
+                    }
+                    log::ForceWrite("END LIST");
                     std::exit(1);
                 }
                 idx++;
@@ -209,13 +229,14 @@ template <typename _Value>
 struct DecardTree {
     using Pointer = DecardTree*;
     using ConstPointer = const DecardTree*;
+    using Priority = uint64_t;
 
     Pointer Left_ = nullptr;
     Pointer Right_ = nullptr;
     Pointer Parent_ = nullptr;
 
-    uint64_t Size_ = 1;
-    uint64_t Priority_ = 0;
+    uint32_t Size_ = 1;
+    Priority Priority_ = 0;
     
     _Value Value_;
 
@@ -228,14 +249,14 @@ struct DecardTree {
         }
     }
 
-    uint64_t GetLeftSize() const {
+    uint32_t GetLeftSize() const {
         if (Left_) {
             return Left_->Size_;
         }
         return 0;
     }
 
-    uint64_t GetRightSize() const {
+    uint32_t GetRightSize() const {
         if (Right_) {
             return Right_->Size_;
         }
@@ -273,7 +294,7 @@ struct DecardTree {
         Size_ = 1 + GetLeftSize() + GetRightSize();
     }
 
-    std::pair<Pointer, Pointer> SplitByIndex(uint64_t _idx) {
+    std::pair<Pointer, Pointer> SplitByIndex(uint32_t _idx) {
         log::WriteDecardTree("SplitByIndex ", _idx);
         if (_idx > Size_) {
             log::WriteDecardTree("SplitByIndex{TooBig} ", _idx, '/', Size_);
@@ -284,7 +305,7 @@ struct DecardTree {
             RecalculateSize();
             return {this, nullptr};
         }
-        uint64_t leftSize = GetLeftSize();
+        uint32_t leftSize = GetLeftSize();
         if (leftSize < _idx) {
             log::WriteDecardTree("SplitByIndex{Right} ", _idx);
             if (Right_) {
@@ -320,7 +341,7 @@ struct DecardTree {
         }
     }
 
-    Pointer Insert(uint64_t _idx, Pointer _node) {
+    Pointer Insert(uint32_t _idx, Pointer _node) {
         log::WriteDecardTree("Insert ", _idx);
         if (!_node) {
             log::WriteDecardTree("Insert{Without node}");
@@ -400,9 +421,9 @@ struct DecardTree {
         }
     }
 
-    uint64_t GetIdx() const {
+    uint32_t GetIdx() const {
         ConstPointer current = this;
-        uint64_t acc = GetLeftSize();
+        uint32_t acc = GetLeftSize();
         while (current->Parent_) {
             if (current->Parent_->Right_ == current) {
                 acc += current->Parent_->GetLeftSize() + 1;
@@ -412,8 +433,8 @@ struct DecardTree {
         return acc;
     }
 
-    Pointer Get(uint64_t _idx) {
-        uint64_t leftSize = GetLeftSize();
+    Pointer Get(uint32_t _idx) {
+        uint32_t leftSize = GetLeftSize();
         if (leftSize == _idx) {
             return this;
         } else {
@@ -425,8 +446,8 @@ struct DecardTree {
         }
     }
 
-    std::pair<Pointer, Pointer> Erase(uint64_t _idx) {
-        uint64_t leftSize = GetLeftSize();
+    std::pair<Pointer, Pointer> Erase(uint32_t _idx) {
+        uint32_t leftSize = GetLeftSize();
         log::WriteDecardTree("Erase ", _idx , '/', Size_, ' ', leftSize);
         if (leftSize == _idx) {
             auto res = Left_ ? UntieLeft()->Merge(UntieRight()) : UntieRight();
@@ -455,18 +476,18 @@ struct DecardTree {
 
 struct FastClientState : IClientState {
     DecardTree<model::Cell> Cells_;
-    std::unordered_map<uint64_t, DecardTree<model::Cell>::Pointer> Nodes_;
+    std::unordered_map<model::CellId, DecardTree<model::Cell>::Pointer> Nodes_;
 
     std::random_device RandomDevice_;
     std::mt19937 Generator_;
-    std::uniform_int_distribution<uint64_t> GeneratePriority_;
+    std::uniform_int_distribution<DecardTree<model::Cell>::Priority> GeneratePriority_;
 
-    uint64_t Iteration_ = 0;
+    model::IterationId Iteration_ = 0;
 
     FastClientState()
-        : Cells_(DecardTree<model::Cell>{.Priority_ = std::numeric_limits<uint64_t>::max(), .Value_={0, 0}})
+        : Cells_(DecardTree<model::Cell>{.Priority_ = std::numeric_limits<DecardTree<model::Cell>::Priority>::max(), .Value_={0, 0}})
         , Generator_(RandomDevice_())
-        , GeneratePriority_(0, std::numeric_limits<uint64_t>::max() - 1)
+        , GeneratePriority_(0, std::numeric_limits<DecardTree<model::Cell>::Priority>::max() - 1)
     {}
 
     virtual ~FastClientState(){}
@@ -480,8 +501,8 @@ struct FastClientState : IClientState {
         std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.Size_-2);
         auto node = GetNode(idxDistrib(_gen));
         auto &cell = node->Value_;
-        std::uniform_int_distribution<uint32_t> valueDistrib(0);
-        uint32_t value = valueDistrib(_gen);
+        std::uniform_int_distribution<model::Value> valueDistrib(0);
+        model::Value value = valueDistrib(_gen);
         log::WriteClientState("FastClientState::GenerateUpdateValueRequest{id=", cell.CellId_, ", value=", value, '}');
         return api::UpdateValueRequest(cell.CellId_, value, Iteration_);
     }
@@ -493,18 +514,18 @@ struct FastClientState : IClientState {
             std::exit(1);
         }
        std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.Size_-1);
-        uint64_t cellId = 0;
+        model::CellId cellId = 0;
         if (uint32_t idx = idxDistrib(_gen)) {
             auto node = GetNode(idx - 1);
             cellId = node->Value_.CellId_;
         }
-        std::uniform_int_distribution<uint32_t> valueDistrib(0);
-        uint32_t value = valueDistrib(_gen);
+        std::uniform_int_distribution<model::Value> valueDistrib(0);
+        model::Value value = valueDistrib(_gen);
         log::WriteClientState("FastClientState::GenerateInsertValueRequest{after=", cellId, ", value=", value, '}');
         return api::InsertValueRequest(cellId, value, Iteration_);
     }
 
-    DecardTree<model::Cell>::Pointer GetNode(uint64_t idx)  {
+    DecardTree<model::Cell>::Pointer GetNode(uint32_t idx)  {
         log::WriteClientState("FastClientState::GetNode{Cells_.Get start} ", idx, '/',  Cells_.Size_-1);
         auto node = Cells_.Get(idx);
         log::WriteClientState("FastClientState::GetNode{Cells_.Get ended}");
@@ -524,10 +545,10 @@ struct FastClientState : IClientState {
             std::exit(1);
         }
         std::uniform_int_distribution<uint32_t> idxDistrib(0, Cells_.Size_-2);
-        uint64_t idx = idxDistrib(_gen);
+        uint32_t idx = idxDistrib(_gen);
         log::WriteClientState("FastClientState::GenerateDeleteValueRequest{generated idx, find id}");
         auto node = GetNode(idx);
-        uint64_t id = node->Value_.CellId_;
+        model::CellId id = node->Value_.CellId_;
         log::WriteClientState("FastClientState::GenerateDeleteValueRequest{id=", id, '}');
         return api::DeleteValueRequest(id, Iteration_);
     }
@@ -542,89 +563,68 @@ struct FastClientState : IClientState {
         return api::SyncRequest(Iteration_);
     }
 
-    void ApplyModifications(const std::vector<api::GenericResponse::Modification> &_modifications) {
-        log::WriteClientState("FastClientState::ApplyModifications ", _modifications.size());
-        auto update = [&] (auto cmd) {
-            using type = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
-                log::WriteClientState("FastClientState::ApplyModifications{UpdateValue} ", cmd.Cell_.CellId_, ' ', cmd.Cell_.Value_);
-                auto node = Nodes_[cmd.Cell_.CellId_];
+    void ApplyOperations(const api::GenericResponse &_response) {
+        std::unordered_map<model::CellId, const model::InsertValue*> postponedInserts;
+        for (auto &update : _response.Updates_) {
+            auto node = Nodes_[update.Cell_.CellId_];
+            node->Value_.Value_ = update.Cell_.Value_;
+        }
+        for (auto &insert : _response.Insertions_) {
+            uint32_t idx = 0;
+            if (insert.NearCellId_) {
+                auto node = Nodes_[insert.NearCellId_];
                 if (!node) {
-                    log::WriteFastClientState("can't find node ", cmd.Cell_.CellId_);
+                    postponedInserts[insert.NearCellId_] = &insert;
+                    continue;
                 }
-                node->Value_.Value_ = cmd.Cell_.Value_;
+                idx = node->GetIdx() + 1;
             }
-            if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
-                log::WriteClientState("FastClientState::ApplyModifications{InsertValue} ", cmd.NearCellId_, ' ', cmd.Cell_.CellId_);
-                uint64_t idx = 0;
-                if (cmd.NearCellId_) {
-                    auto node = Nodes_[cmd.NearCellId_];
-                    if (!node) {
-                        log::WriteFastClientState("can't find node ", cmd.NearCellId_);
-                    }
-                    idx = node->GetIdx() + 1;
-                }
-                std::unique_ptr<DecardTree<model::Cell>> newNode(new DecardTree<model::Cell>{.Priority_=GeneratePriority_(Generator_), .Value_=cmd.Cell_});
-                Nodes_[cmd.Cell_.CellId_] = newNode.get();
-                log::WriteFastClientState("before decard");
-                Cells_.Insert(idx, newNode.release());
-                log::WriteFastClientState("after decard");
+
+            std::unique_ptr<DecardTree<model::Cell>> newNode(new DecardTree<model::Cell>{.Priority_=GeneratePriority_(Generator_), .Value_=insert.Cell_});
+            Nodes_[insert.Cell_.CellId_] = newNode.get();
+            Cells_.Insert(idx, newNode.release());
+
+            auto postponedIt = postponedInserts.find(insert.Cell_.CellId_);
+            while (postponedIt != postponedInserts.end()) {
+                auto node = Nodes_[postponedIt->second->NearCellId_];
+                idx = node->GetIdx() + 1;
+
+                std::unique_ptr<DecardTree<model::Cell>> newNode(new DecardTree<model::Cell>{.Priority_=GeneratePriority_(Generator_), .Value_=postponedIt->second->Cell_});
+                Nodes_[postponedIt->second->Cell_.CellId_] = newNode.get();
+
+                auto next = postponedInserts.find(postponedIt->second->Cell_.CellId_);
+                postponedInserts.erase(std::exchange(postponedIt, next));
             }
-            if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
-                log::WriteClientState("FastClientState::ApplyModifications{DeleteValue} ", cmd.CellId_);
-                auto node = Nodes_[cmd.CellId_];
-                if (!node) {
-                    log::WriteFastClientState("can't find node ", cmd.CellId_);
-                }
-                uint64_t idx = node->GetIdx();
-                if (idx) {
-                    log::WriteServerState("FastClientState::ApplyModifications{left neigh} ", Cells_.Get(idx-1)->Value_.CellId_);
-                } else {
-                    log::WriteServerState("FastClientState::ApplyModifications{left neigh} ", 0);
-                }
-                log::WriteFastClientState("idx for erasing ", idx, '/', Cells_.Size_ - 1);
-                Nodes_.erase(cmd.CellId_);
-                auto [root, erased] = Cells_.Erase(idx);
-                log::WriteFastClientState("erase ", erased->Value_.CellId_);
-                if (idx) {
-                    log::WriteServerState("FastClientState::ApplyModifications{left neigh} ", Cells_.Get(idx-1)->Value_.CellId_);
-                } else {
-                    log::WriteServerState("FastClientState::ApplyModifications{left neigh} ", 0);
-                }
-                if (erased) {
-                    delete erased;
-                }
-                else {
-                    log::WriteFastClientState("can't find node for erasing ", cmd.CellId_);
-                }
-            }
-        };
-        for (auto &el : _modifications) {
-            std::visit(update, el);
+        }
+        for (auto &del : _response.Deletions_) {
+            auto node = Nodes_[del.CellId_];
+            uint32_t idx = node->GetIdx();
+            auto [_, erased] =  Cells_.Erase(idx);
+            delete erased;
         }
     }
 
     void HandleUpdateValueResponse(const api::UpdateValueResponse &_response) override {
-        log::WriteClientState("FastClientState::HandleUpdateValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        ApplyModifications(_response.Modificatoins_);
+        log::WriteClientState("FastClientState::HandleUpdateValueResponse ", _response.Iteration_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleInsertValueResponse(const api::InsertValueResponse &_response) override {
-        log::WriteClientState("FastClientState::HandleInsertValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        ApplyModifications(_response.Modificatoins_);
+        log::WriteClientState("FastClientState::HandleInsertValueResponse ", _response.Iteration_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleDeleteValueResponse(const api::DeleteValueResponse &_response) override {
-        log::WriteClientState("FastClientState::HandleDeleteValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        ApplyModifications(_response.Modificatoins_);
+        log::WriteClientState("FastClientState::HandleDeleteValueResponse ", _response.Iteration_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleSyncResponse(const api::SyncResponse &_response) override {
         log::WriteClientState("FastClientState::HandleSyncResponse");
-        ApplyModifications(_response.Modificatoins_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
@@ -632,7 +632,7 @@ struct FastClientState : IClientState {
         log::WriteClientState("FastClientState::HandleState");
         if (Cells_.Size_ == 1) {
             log::WriteClientState("FastClientState::HandleState{Init}");
-            for (uint64_t idx = 0; idx < _response.Cells_.size(); ++idx) {
+            for (uint32_t idx = 0; idx < _response.Cells_.size(); ++idx) {
                 log::WriteInit("Init idx=", idx, " id=", _response.Cells_[idx].CellId_);
                 std::unique_ptr<DecardTree<model::Cell>> node(new DecardTree<model::Cell>{
                         .Priority_=GeneratePriority_(Generator_),
@@ -650,23 +650,23 @@ struct FastClientState : IClientState {
             return;
         }
         if (magic_numbers::WithStateChecking) {
-            ApplyModifications(_response.Modificatoins_);
+            ApplyOperations(_response);
             if (Cells_.Size_ - 1 != _response.Cells_.size()) {
                 log::ForceWrite("Sizes aren't equal ", Cells_.Size_ - 1, ' ', _response.Cells_.size());
-                for (uint64_t idx = 0; idx < Cells_.Size_ - 1; ++idx) {
+                for (uint32_t idx = 0; idx < Cells_.Size_ - 1; ++idx) {
                     auto &value = Cells_.Get(idx)->Value_;
                     log::WriteFullStateLog('<', idx, "> ", value.CellId_);
                 }
                 log::ForceWrite("END LIST");
                 std::exit(1);
             }
-            uint64_t idx = 0;
+            uint32_t idx = 0;
             for (auto &cell : _response.Cells_) {
                 auto &value = Cells_.Get(idx)->Value_;
                 if (value != cell) {
                     if (value.CellId_ !=  cell.CellId_) {
                         log::ForceWrite("Cells aren't equal at ", idx, ' ', value.CellId_, ' ', cell.CellId_);
-                        for (uint64_t idx = 0; idx < Cells_.Size_ - 1; ++idx) {
+                        for (uint32_t idx = 0; idx < Cells_.Size_ - 1; ++idx) {
                             auto &value = Cells_.Get(idx)->Value_;
                             log::WriteFullStateLog('<', idx, "> ", value.CellId_);
                         }
@@ -685,18 +685,12 @@ struct FastClientState : IClientState {
 };
 
 struct FastSmallClientState : IClientState {
-    std::vector<uint64_t> CellIds_;
-    std::unordered_set<uint64_t> DeletedIds_;
+    std::vector<model::CellId> CellIds_;
+    std::unordered_set<model::CellId> DeletedIds_;
 
-    std::random_device RandomDevice_;
-    std::mt19937 Generator_;
-    std::uniform_int_distribution<uint64_t> GeneratePriority_;
-
-    uint64_t Iteration_ = 0;
+    model::IterationId Iteration_ = 0;
 
     FastSmallClientState()
-        : Generator_(RandomDevice_())
-        , GeneratePriority_(0, std::numeric_limits<uint64_t>::max() - 1)
     {}
 
     virtual ~FastSmallClientState(){}
@@ -707,16 +701,16 @@ struct FastSmallClientState : IClientState {
         while (DeletedIds_.count(CellIds_[idx])) {
             idx = idxDistrib(_gen);
         }
-        uint64_t cellId = CellIds_[idx];
-        std::uniform_int_distribution<uint32_t> valueDistrib(0);
-        uint32_t value = valueDistrib(_gen);
+        model::CellId cellId = CellIds_[idx];
+        std::uniform_int_distribution<model::Value> valueDistrib(0);
+        model::Value value = valueDistrib(_gen);
         log::WriteClientState("FastSmallClientState::GenerateUpdateValueRequest{id=", cellId, ", value=", value, '}');
         return api::UpdateValueRequest(cellId, value, Iteration_);
     }
 
     api::InsertValueRequest GenerateInsertValueRequest(std::mt19937 &_gen) override {
        std::uniform_int_distribution<uint32_t> idxDistrib(0, CellIds_.size());
-        uint64_t cellId = 0;
+        model::CellId cellId = 0;
         uint32_t idx = idxDistrib(_gen);
         while (idx && DeletedIds_.count(CellIds_[idx - 1])) {
             idx = idxDistrib(_gen);
@@ -724,19 +718,19 @@ struct FastSmallClientState : IClientState {
         if (idx) {
             cellId = CellIds_[idx - 1];
         }
-        std::uniform_int_distribution<uint32_t> valueDistrib(0);
-        uint32_t value = valueDistrib(_gen);
+        std::uniform_int_distribution<model::Value> valueDistrib(0);
+        model::Value value = valueDistrib(_gen);
         log::WriteClientState("FastSmallClientState::GenerateInsertValueRequest{after=", cellId, ", value=", value, '}');
         return api::InsertValueRequest(cellId, value, Iteration_);
     }
 
     api::DeleteValueRequest GenerateDeleteValueRequest(std::mt19937 &_gen) override {
         std::uniform_int_distribution<uint32_t> idxDistrib(0, CellIds_.size()-1);
-        uint64_t idx = idxDistrib(_gen);
+        uint32_t idx = idxDistrib(_gen);
         while (DeletedIds_.count(CellIds_[idx])) {
             idx = idxDistrib(_gen);
         }
-        uint64_t id = CellIds_[idx];
+        model::CellId id = CellIds_[idx];
         log::WriteClientState("FastSmallClientState::GenerateDeleteValueRequest{id=", id, '}');
         return api::DeleteValueRequest(id, Iteration_);
     }
@@ -751,45 +745,37 @@ struct FastSmallClientState : IClientState {
         return api::SyncRequest(Iteration_);
     }
 
-    void ApplyModifications(const std::vector<api::GenericResponse::Modification> &_modifications) {
-        log::WriteClientState("FastSmallClientState::ApplyModifications ", _modifications.size());
-        auto update = [&] (auto cmd) {
-            using type = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
-                log::WriteClientState("FastSmallClientState::ApplyModifications{InsertValue ", cmd.Cell_.CellId_,"}");
-                CellIds_.push_back(cmd.Cell_.CellId_);
-            }
-            if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
-                log::WriteClientState("FastSmallClientState::ApplyModifications{DeleteValue ", cmd.CellId_,"}");
-                DeletedIds_.insert(cmd.CellId_);
-            }
-        };
-        for (auto &el : _modifications) {
-            std::visit(update, el);
+    void ApplyOperations(const api::GenericResponse &response) {
+        log::WriteClientState("FastSmallClientState::ApplyOperations");
+        for (auto &insert : response.Insertions_) {
+            CellIds_.push_back(insert.Cell_.CellId_);
+        }
+        for (auto &del : response.Deletions_) {
+            DeletedIds_.insert(del.CellId_);
         }
     }
 
     void HandleUpdateValueResponse(const api::UpdateValueResponse &_response) override {
-        log::WriteClientState("FastSmallClientState::HandleUpdateValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        ApplyModifications(_response.Modificatoins_);
+        log::WriteClientState("FastSmallClientState::HandleUpdateValueResponse ", _response.Iteration_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleInsertValueResponse(const api::InsertValueResponse &_response) override {
-        log::WriteClientState("FastSmallClientState::HandleInsertValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        ApplyModifications(_response.Modificatoins_);
+        log::WriteClientState("FastSmallClientState::HandleInsertValueResponse ", _response.Iteration_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleDeleteValueResponse(const api::DeleteValueResponse &_response) override {
-        log::WriteClientState("FastSmallClientState::HandleDeleteValueResponse ", _response.Iteration_, ' ', _response.Modificatoins_.size());
-        ApplyModifications(_response.Modificatoins_);
+        log::WriteClientState("FastSmallClientState::HandleDeleteValueResponse ", _response.Iteration_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
     void HandleSyncResponse(const api::SyncResponse &_response) override {
         log::WriteClientState("FastSmallClientState::HandleSyncResponse");
-        ApplyModifications(_response.Modificatoins_);
+        ApplyOperations(_response);
         Iteration_ = _response.Iteration_;
     }
 
@@ -798,7 +784,7 @@ struct FastSmallClientState : IClientState {
         if (CellIds_.empty()) {
             log::WriteClientState("FastSmallClientState::HandleState{Init}");
             CellIds_.reserve(2 * _response.Cells_.size());
-            for (uint64_t idx = 0; idx < _response.Cells_.size(); ++idx) {
+            for (uint32_t idx = 0; idx < _response.Cells_.size(); ++idx) {
                 CellIds_.push_back(_response.Cells_[idx].CellId_);
             }
             log::WriteClientState("FastSmallClientState::HandleState{Cells_.size()=", CellIds_.size(),'}');

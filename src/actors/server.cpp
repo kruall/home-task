@@ -11,26 +11,38 @@ using namespace home_task::api;
 
 
 void ServerRunner::UpdateValue(UpdateValueRequest *_request, uint64_t _sender) {
-    State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
     auto response = State_->UpdateValue(*_request);
-    response.Modificatoins_ = State_->GetNextHistory(_sender);
-    response.Iteration_ = State_->GetIteration();
+    if (!magic_numbers::WithDelayedHistory || !Counter_) {
+        State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
+        State_->GetNextHistory(_sender, &response);
+        response.Iteration_ = State_->GetIteration();
+    } else {
+        response.Iteration_ = _request->PreviousIteration_;
+    }
     Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
 
 void ServerRunner::InsertValue(InsertValueRequest *_request, uint64_t _sender) {
-    State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
     auto response = State_->InsertValue(*_request);
-    response.Modificatoins_ = State_->GetNextHistory(_sender);
-    response.Iteration_ = State_->GetIteration();
+    if (!magic_numbers::WithDelayedHistory || !Counter_) {
+        State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
+        State_->GetNextHistory(_sender, &response);
+        response.Iteration_ = State_->GetIteration();
+    } else {
+        response.Iteration_ = _request->PreviousIteration_;
+    }
     Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
 
 void ServerRunner::DeleteValue(DeleteValueRequest *_request, uint64_t _sender) {
-    State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
     auto response = State_->DeleteValue(*_request);
-    response.Modificatoins_ = State_->GetNextHistory(_sender);
-    response.Iteration_ = State_->GetIteration();
+    if (!magic_numbers::WithDelayedHistory || !Counter_) {
+        State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
+        State_->GetNextHistory(_sender, &response);
+        response.Iteration_ = State_->GetIteration();
+    } else {
+        response.Iteration_ = _request->PreviousIteration_;
+    }
     Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
 
@@ -38,7 +50,7 @@ void ServerRunner::LoadState(LoadStateRequest *_request, uint64_t _sender) {
     State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
     auto state = State_->LoadState();
     if (magic_numbers::WithStateChecking) {
-        state.Modificatoins_ = State_->GetNextHistory(_sender);
+        State_->GetNextHistory(_sender, &state);;
     }
     state.Iteration_ = State_->GetIteration();
     Client_.Send(_sender, MakeResponseMessage(std::move(state)));
@@ -47,7 +59,7 @@ void ServerRunner::LoadState(LoadStateRequest *_request, uint64_t _sender) {
 void ServerRunner::Sync(SyncRequest *_request, uint64_t _sender) {
     State_->MoveIterationForClient(_sender, _request->PreviousIteration_);
     api::SyncResponse response;
-    response.Modificatoins_ = State_->GetNextHistory(_sender);
+    State_->GetNextHistory(_sender, &response);
     response.Iteration_ = State_->GetIteration();
     Client_.Send(_sender, MakeResponseMessage(std::move(response)));
 }
@@ -63,7 +75,7 @@ void ServerRunner::Run() {
             log::WriteServerRunner("ServerRunner::Run{Poisoned}");
             break;
         }
-
+        Counter_++;
         auto startProcessing = std::chrono::steady_clock::now();
         switch (message->Type_) {
         case (uint32_t)EAPIEventsType::UpdateValueRequest:
@@ -85,5 +97,8 @@ void ServerRunner::Run() {
         std::chrono::duration<double> durationOfProcessing = std::chrono::steady_clock::now() - startProcessing;
         log::WriteServerRunner("ServerRunner::Run{Processing message ", durationOfReceiving.count(), "s}");
         State_->CutHistory();
+        if (Counter_ == 10) {
+            Counter_ = 0;
+        }
     }
 }

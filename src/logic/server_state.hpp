@@ -21,13 +21,13 @@ struct IServerState {
 
     virtual api::State LoadState() = 0;
 
-    virtual void Connect(uint32_t _id) = 0;
+    virtual void Connect(model::ClientId _id) = 0;
 
-    virtual std::vector<api::GenericResponse::Modification> GetNextHistory(uint32_t _id) = 0;
+    virtual void GetNextHistory(model::ClientId _id, api::GenericResponse *_response) = 0;
 
-    virtual uint64_t GetIteration() = 0;
+    virtual model::IterationI GetIteration() = 0;
 
-    virtual void MoveIterationForClient(uint32_t _id, uint64_t _iteration) = 0;
+    virtual void MoveIterationForClient(model::ClientId _id, model::IterationId _iteration) = 0;
 
     virtual void CutHistory() = 0;
 };
@@ -59,20 +59,20 @@ struct ServerStateNop : IServerState {
         return api::State({});
     }
 
-    void Connect(uint32_t _id) override {
+    void Connect(model::ClientId _id) override {
         log::WriteServerState("ServerStateNop::LoadState");
     }
 
-    std::vector<api::GenericResponse::Modification> GetNextHistory(uint32_t) override {
+    void GetNextHistory(model::ClientId, api::GenericResponse *) override {
         log::WriteServerState("ServerStateNop::GetNextHistory");
-        return {};
+        return;
     }
     
-    uint64_t GetIteration() override {
+    model::IterationI GetIteration() override {
         return 0;
     }
 
-    void MoveIterationForClient(uint32_t, uint64_t) override {
+    void MoveIterationForClient(model::ClientId, model::IterationI) override {
         log::WriteServerState("ServerStateNop::MoveIterationForClient");
         return;
     }
@@ -82,251 +82,346 @@ struct ServerStateNop : IServerState {
     }
 };
 
-struct ServerState : IServerState {
-    std::list<model::Cell> Cells_;
-    std::unordered_map<uint64_t, std::list<model::Cell>::iterator> Ids_;
+template <typename _Derived>
+struct Referable {
+    uint32_t ReferenceCount_ = 0;
 
-    std::deque<api::GenericResponse::Modification> History_;
-    uint64_t LastCutIteration_ = 0;
-    uint64_t Iteration_ = 0;
-
-    std::unordered_map<uint32_t, uint64_t> LastSeenClients_;
-    std::priority_queue<
-            std::pair<uint64_t, uint32_t>,
-            std::vector<std::pair<uint64_t, uint32_t>>,
-            std::greater<std::pair<uint64_t, uint32_t>>>
-        OrderedSeenClients_;
-
-    std::unordered_map<uint64_t, decltype(std::declval<model::Cell>().Value_)> PostponedUpdate_;
-    std::unordered_map<uint64_t, uint64_t> PostponedUpdateCnt_;
-    std::unordered_map<uint64_t, std::deque<api::GenericResponse::InsertValue*>> PostponedInsertion_;
-    std::unordered_map<uint64_t, uint64_t> PostponedDeletion_;
-
-    uint64_t NextCellId_ = 1;
-    
-    ServerState(const std::vector<model::Cell> &_cells) {
-        log::WriteServerState("ServerState{_cells.size()=", _cells.size(), '}');
-        Cells_.insert(Cells_.begin(), _cells.cbegin(), _cells.cend());
-        uint64_t idx = 0;
-        for (auto it = Cells_.begin(); it != Cells_.end(); ++it, ++idx) {
-            Ids_[it->CellId_] = it;
-            NextCellId_ = std::max(NextCellId_, it->CellId_ + 1);
-            log::WriteInit("ServerInit idx=", idx, " id=", it->CellId_);
-        }
+    void Ref() {
+        ReferenceCount_++;
     }
 
-    virtual ~ServerState(){}
+    void Unref();
+};
+
+template <typename _Derived>
+struct List {
+    _Derived *Prev_ = nullptr;
+    _Derived *Next_ = nullptr;
+
+    void PutAfter(_Derived *_node);
+    void PullOut();
+};
+
+template <typename _Derived>
+struct DeletableObject {
+    _Derived *NearLive_ = nullptr;
+    bool Deleted_ = false;
+    uint32_t NearRefCount_ = 0;
+
+    void SetNear(_Derived *_near);
+    _Derived* FindNear();
+};
+
+
+struct CellState
+    : model::Cell
+    , Referable<CellState>
+    , List<CellState>
+    , DeletableObject<CellState>
+{
+    std::queue<model::CellId> *QueueToRemove_;
+
+    CellState(model::Cell _cell, std::queue<model::CellId> *_queue)
+        : model::Cell(_cell)
+        , QueueToRemove_(_queue)
+    {}
+};
+
+template <typename _Derived>
+void Referable<_Derived>::Unref() {
+    if (--ReferenceCount_ == 1) {
+        auto self = static_cast<_Derived*>(this);
+        self->QueueToRemove_->push(self->CellId_);
+    }
+}
+
+template <typename _Derived>
+void List<_Derived>::PutAfter(_Derived *_node) {
+    if (_node) {
+        if (Next_) {
+            Next_->Prev_ = _node;
+        }
+        _node->Next_ = std::exchange(Next_, _node);
+        _node->Prev_ = static_cast<_Derived*>(this);
+        _node->Ref();
+    }
+}
+
+template <typename _Derived>
+void List<_Derived>::PullOut() {
+    if (Prev_) {
+        Prev_->Next_ = Next_;
+        static_cast<_Derived*>(this)->Unref();
+    }
+    if (Next_) {
+        Next_->Prev_ = Prev_;
+    }
+    Prev_ = Next_ = nullptr;
+}
+
+template <typename _Derived>
+void DeletableObject<_Derived>::SetNear(_Derived *_near) {
+    if (NearLive_) {
+        NearLive_->Unref();
+        NearLive_->NearRefCount_--;
+    }
+    if (_near) {
+        NearLive_ = _near;
+        NearLive_->Ref();
+        NearLive_->NearRefCount_++;
+    }
+}
+
+template <typename _Derived>
+_Derived* DeletableObject<_Derived>::FindNear() {
+    std::vector<_Derived*> seen;
+    if (NearLive_->Deleted_) {
+        while (NearLive_->Deleted_) {
+            NearLive_->Unref();
+            seen.push_back(NearLive_);
+            NearLive_ = NearLive_->NearLive_;
+        }
+        NearLive_->Ref();
+        for (_Derived *node : seen) {
+            node->SetNear(NearLive_);
+        }
+    }
+    return NearLive_;
+}
+
+
+
+using CellStateDict = std::unordered_map<model::CellId, std::unique_ptr<CellState>>;
+
+struct ServerState : IServerState {
+    std::queue<model::CellId> QueueToRemove_;
+    CellState Root_;
+    CellStateDict States_;
+
+    model::OperationDeq History_;
+    model::IterationId LastCutIteration_ = 0;
+    model::IterationId Iteration_ = 0;
+
+
+    std::unordered_map<model::ClientId, model::IterationI> LastSeenClients_;
+    std::priority_queue<
+            std::pair<model::IterationI, model::ClientId>,
+            std::vector<std::pair<model::IterationI, model::ClientId>>,
+            std::greater<std::pair<model::IterationI, model::ClientId>>>
+        OrderedSeenClients_;
+
+
+    model::CellId NextCellId_ = 1;
+    
+    ServerState(const model::CellVector &_cells)
+        : Root_(model::Cell(0, 0), &QueueToRemove_)
+    {
+        log::WriteServerState("ServerState{_cells.size()=", _cells.size(), '}');
+
+        CellState *current = &Root_;
+        Root_.ReferenceCount_ = 2;
+
+        States_.emplace(0, current);
+        CellState *prev = nullptr;
+        log::WriteServerState("ServerState{Start}");
+        uint32_t idx = 0;
+        for (const model::Cell &cell : _cells) {
+            log::WriteInit("ServerState{idx}", idx++);
+            CellState *node = new CellState(cell, &QueueToRemove_);
+            current->PutAfter(node);
+            if (current->Next_ != node) {
+                log::ForceWrite("ERROR  PutAfter doesn't work");
+                std::exit(1);
+            }
+            node->SetNear(current);
+            prev = std::exchange(current, node);
+            States_.emplace(cell.CellId_, node);
+            NextCellId_ = std::max(NextCellId_, cell.CellId_ + 1);
+        }
+        current->Next_ =  &Root_;
+        Root_.Prev_ = current;
+        Root_.SetNear(current);
+    }
+
+    virtual ~ServerState(){
+        States_[0].release();
+    }
+
+    CellState& GetState(model::CellId _cellId) {
+        auto it = States_.find(_cellId);
+        if (it == States_.end()) {
+            log::ForceWrite("failed to find state for cellId# ", _cellId);
+            std::exit(1);
+        }
+        return *(it->second);
+    }
 
     api::UpdateValueResponse UpdateValue(const api::UpdateValueRequest &_request) override {
         log::WriteServerState("ServerState::UpdateValue ", _request.CellId_, ' ',_request.Value_);
-        if (!PostponedDeletion_.count(_request.CellId_)) {
-            Iteration_++;
-            model::Cell cell(_request.CellId_, _request.Value_);
-            History_.emplace_back(api::GenericResponse::UpdateValue{.Cell_ = cell});
-            PostponedUpdate_[_request.CellId_] = _request.Value_;
-            PostponedUpdateCnt_[_request.CellId_]++;
-            log::WriteServerState("ServerState::InsertValue{postponed waited ", PostponedUpdateCnt_[_request.CellId_],"}");
+
+        CellState &state = GetState(_request.CellId_);
+        if (!state.Deleted_) {
+            Iteration_++;;
+            state.Value_ = _request.Value_;
+            state.Ref();
+            History_.emplace_back(model::UpdateValue{.Cell_ = state});
         }
         return api::UpdateValueResponse();
     }
 
-    api::InsertValueResponse InsertValue(const api::InsertValueRequest &_request) override {
-        log::WriteServerState("ServerState::InsertValue");
-        Iteration_++;
-        uint64_t cellId = NextCellId_++;
-        model::Cell cell(cellId, _request.Value_);
-        uint64_t nearCellId = _request.NearCellId_;
-        auto it = PostponedDeletion_.find(nearCellId);
-        if (it != PostponedDeletion_.end()) {
-            nearCellId = it->second;
-            log::WriteServerState("ServerState::InsertValue{with deleted nearCell}");
+    void CleanQueue() {
+        log::WriteServerState("ServerState::CleanQueue ", QueueToRemove_.size());
+        uint32_t count = 0;
+        while (QueueToRemove_.size()) {
+            model::CellId id =  QueueToRemove_.front();
+            std::unique_ptr<CellState> &state = States_[id];
+            QueueToRemove_.pop();
+            if (state->ReferenceCount_ > 1) {
+                continue;
+            }
+            log::WriteServerState("ServerState::CleanQueue{Clean} ", state->CellId_);
+            state->SetNear(nullptr);
+            state->PullOut();
+            States_.erase(state->CellId_);
+            count++;
         }
-        History_.emplace_back(api::GenericResponse::InsertValue{.NearCellId_ = nearCellId, .Cell_ = cell});
-        PostponedInsertion_[nearCellId].push_front(&std::get<api::GenericResponse::InsertValue>(*--History_.end()));
+        log::WriteServerState("ServerState::CleanQueue{Cleaned} ", count);
+    }
+
+    api::InsertValueResponse InsertValue(const api::InsertValueRequest &_request) override {
+        Iteration_++;
+        model::CellId cellId = NextCellId_++;
+
+        log::WriteServerState("ServerState::InsertValue ", _request.NearCellId_, ' ', cellId);
+
+        CellState *newState = new CellState(model::Cell(cellId, _request.Value_), &QueueToRemove_);
+        CellState *nearState = &GetState(_request.NearCellId_);
+        newState->SetNear(nearState);
+        nearState->PutAfter(newState);
+
+        CellState *current = newState->Next_;
+        CellState *prev = newState;
+        while (current && current->NearLive_ != prev) {
+            current->SetNear(newState);
+            prev = std::exchange(current, current->Next_);
+        }
+
+        States_.emplace(cellId, newState);
+        newState->Ref();
+        History_.emplace_back(model::InsertValue{.NearCellId_ = newState->FindNear()->CellId_, .Cell_ = *newState});
         return api::InsertValueResponse(cellId);
     }
 
     api::DeleteValueResponse DeleteValue(const api::DeleteValueRequest &_request) override {
-        log::WriteServerState("ServerState::DeleteValue");
-        auto delIt = PostponedDeletion_.find(_request.CellId_);
-        if (delIt == PostponedDeletion_.end()) {
-            Iteration_++;
-            History_.emplace_back(api::GenericResponse::DeleteValue{.CellId_ = _request.CellId_});
-            auto listIterator = Cells_.begin();
-            uint64_t toCellId = 0;
-            if (auto it = Ids_.find(_request.CellId_); it != Ids_.end() && it->second != Cells_.begin()) {
-                auto listIterator = it->second;
-                toCellId = (--listIterator)->CellId_;
-                listIterator++;
-            }
-            PostponedDeletion_[_request.CellId_] = toCellId;
-            listIterator++;
-            while (listIterator != Cells_.end()) {
-                auto deletionIt = PostponedDeletion_.find(listIterator->CellId_);
-                if (deletionIt == PostponedDeletion_.end()) {
-                    break;
-                }
-                log::WriteServerState("ServerState::DeleteValue{shift}");
-                deletionIt->second = toCellId;
-                listIterator++;
-            }
+        log::WriteServerState("ServerState::DeleteValue ", _request.CellId_);
+        CellState &state = GetState(_request.CellId_);
+
+        if (state.Deleted_) {
+            return api::DeleteValueResponse();
         }
+        Iteration_++;
+        state.Deleted_ = true;
+        state.Ref();
+        History_.emplace_back(model::DeleteValue{.CellId_ = _request.CellId_});
         return api::DeleteValueResponse();
-    }
-
-    void CheckUpdate(uint64_t _cellId, auto &_cells, uint64_t *_idx) {
-        auto updateIt = PostponedUpdate_.find(_cellId);
-        if (updateIt != PostponedUpdate_.end()) {
-            log::WriteFullStateLog('[', *_idx, "] update value ", _cellId, ' ', updateIt->second);
-            _cells.back().Value_ = updateIt->second;
-        }
-    }
-
-    void AddPostponed(uint64_t _cellId, auto &_cells, uint64_t *_idx) {
-        auto insertIt = PostponedInsertion_.find(_cellId);
-        if (insertIt != PostponedInsertion_.end()) {
-            for (auto &nextCellIt : insertIt->second) {
-                if (!PostponedDeletion_.count(nextCellIt->Cell_.CellId_)) {
-                    _cells.push_back(nextCellIt->Cell_);
-                    CheckUpdate(nextCellIt->Cell_.CellId_, _cells, _idx);
-                    log::WriteFullStateLog('[', *_idx, "] add postponed ", nextCellIt->Cell_.CellId_);
-                    (*_idx)++;
-                    AddPostponed(nextCellIt->Cell_.CellId_, _cells, _idx);
-                } else {
-                    log::WriteFullStateLog('[', *_idx, "] skip postponed ", nextCellIt->Cell_.CellId_);
-                }
-            }
-        }
     }
 
     api::State LoadState() override {
         log::WriteServerState("ServerState::LoadState");
         std::vector<model::Cell> cells;
-        cells.reserve(Cells_.size() + PostponedInsertion_.size() - PostponedDeletion_.size());
-        uint64_t idx = 0;
+        cells.reserve(States_.size());
 
-        AddPostponed(0, cells, &idx);
-        for (auto &cell : Cells_) {
-            if (!PostponedDeletion_.count(cell.CellId_)) {
-                cells.push_back(cell);
-                CheckUpdate(cell.CellId_, cells, &idx);
-                log::WriteFullStateLog('[', idx, "] add ", cell.CellId_);
-                idx++;
-            } else {
-                log::WriteFullStateLog('[', idx, "] skip ", cell.CellId_);
+        CellState *current = &Root_;
+        uint32_t idx = 0;
+        while (current) {
+            if (!current->Next_) {
+                log::WriteFullStateLog("ERROR [", idx, "] next is nullptr");
+                std::exit(1);
             }
-            AddPostponed(cell.CellId_, cells, &idx);
+            log::WriteFullStateLog('[', idx, "] move from ", current->CellId_, " to ", current->Next_->CellId_);
+            current = current->Next_;
+
+            if (current == &Root_) {
+                break;
+            }
+            if (current->Deleted_) {
+                log::WriteFullStateLog('[', idx, "] skip ", current->CellId_);
+                continue;
+            }
+            log::WriteFullStateLog('[', idx++, "] add ", current->CellId_);
+            cells.push_back(*current);
         }
+
         log::WriteServerState("ServerState::LoadState{cells.size()=", cells.size(), '}');
         return api::State(std::move(cells));
     }
 
-    void Connect(uint32_t _id) override {
+    void Connect(model::ClientId _id) override {
         log::WriteServerState("ServerState::Connect");
     }
 
-    std::vector<api::GenericResponse::Modification> GetNextHistory(uint32_t _id) override {
+    void GetNextHistory(model::ClientId _id, api::GenericResponse *response) override {
         log::WriteServerState("ServerState::GetNextHistory");
-        std::vector<api::GenericResponse::Modification> result;
-        uint64_t lastSeenIteration = LastSeenClients_[_id];
+        model::IterationI lastSeenIteration = LastSeenClients_[_id];
         if (History_.size() < Iteration_ - lastSeenIteration) {
             log::WriteServerState("ServerState::GetNextHistory{Old}");
-            return {};
+            return;
         }
         uint64_t beginIdx = lastSeenIteration - LastCutIteration_;
-        result.reserve(History_.size() - beginIdx);
         auto begin = History_.begin() + beginIdx;
         for (auto it = begin; it != History_.end(); ++it) {
-            auto change = [&] (auto &cmd) {
-                if constexpr (std::is_same_v<api::GenericResponse::InsertValue, std::decay_t<decltype(cmd)>>) {
-                    log::WriteFullStateLog(">>insert<< ", cmd.NearCellId_, ' ', cmd.Cell_.CellId_);
-                    auto delIt = PostponedDeletion_.find(cmd.NearCellId_);
-                    if (delIt != PostponedDeletion_.end()) {
-                        cmd.NearCellId_ = delIt->second;
+            auto put = [&] (auto &cmd) {
+                if constexpr (std::is_same_v<model::InsertValue, std::decay_t<decltype(cmd)>>) {
+                    CellState &state = GetState(cmd.Cell_.CellId_);
+                    response->Insertions_.push_back(cmd);
+                    if (state.Prev_->Deleted_) {
+                        response->Insertions_.back().NearCellId_ = state.FindNear()->CellId_;
                     }
+                    log::WriteHistoryLog(">>insert<< ", cmd.Cell_.CellId_, ' ', cmd.NearCellId_);
                 }
-                if constexpr (std::is_same_v<api::GenericResponse::UpdateValue, std::decay_t<decltype(cmd)>>) {
-                    log::WriteFullStateLog(">>update<< ", cmd.Cell_.CellId_, ' ', cmd.Cell_.Value_);
+                if constexpr (std::is_same_v<model::UpdateValue, std::decay_t<decltype(cmd)>>) {
+                    log::WriteHistoryLog(">>update<< ", cmd.Cell_.CellId_, ' ', cmd.Cell_.Value_);
+                    CellState &state = GetState(cmd.Cell_.CellId_);
+                    response->Updates_.push_back(cmd);
+                    response->Updates_.back().Cell_ = state;
                 }
-                if constexpr (std::is_same_v<api::GenericResponse::DeleteValue, std::decay_t<decltype(cmd)>>) {
-                    log::WriteFullStateLog(">>delete<< ", cmd.CellId_);
+                if constexpr (std::is_same_v<model::DeleteValue, std::decay_t<decltype(cmd)>>) {
+                    log::WriteHistoryLog(">>delete<< ", cmd.CellId_);
+                    response->Deletions_.push_back(cmd);
                 }
             };
-            result.push_back(*it);
-            std::visit(change, result.back());
+            std::visit(put, *it);
         }
-        return std::move(result);
     }
 
-    uint64_t GetIteration() override {
+    model::IterationI GetIteration() override {
         return Iteration_;
     }
 
-    void ApplyHistory(uint64_t _toIteration) {
+    void ApplyHistory(model::IterationI _toIteration) {
         log::WriteServerState("ServerState::ApplyHistory ", _toIteration);
         auto update = [&] (auto cmd) {
             using type = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<type, api::GenericResponse::UpdateValue>) {
+            if constexpr (std::is_same_v<type, model::UpdateValue>) {
                 log::WriteServerState("ServerState::ApplyHistory{UpdateValue} ", cmd.Cell_.CellId_, ' ', cmd.Cell_.Value_);
-                auto idIt = Ids_.find(cmd.Cell_.CellId_);
-                if (idIt == Ids_.end()) {
-                    log::WriteServerState("ServerState::ApplyHistory{can't find cell}");
-                    std::exit(1);
-                }
-                auto itCell = idIt->second;
-                itCell->Value_ = cmd.Cell_.Value_;
-                if (!--PostponedUpdateCnt_[cmd.Cell_.CellId_]) {
-                    log::WriteServerState("ServerState::ApplyHistory{erase from postponed} ", cmd.Cell_.CellId_);
-                    PostponedUpdate_.erase(cmd.Cell_.CellId_);
-                    PostponedUpdateCnt_.erase(cmd.Cell_.CellId_);
-                } else {
-                    log::WriteServerState("ServerState::ApplyHistory{waited post} ", PostponedUpdateCnt_[cmd.Cell_.CellId_]);
-                }
+                CellState &state = GetState(cmd.Cell_.CellId_);
+                state.Unref();
             }
-            if constexpr (std::is_same_v<type, api::GenericResponse::InsertValue>) {
+            if constexpr (std::is_same_v<type, model::InsertValue>) {
                 log::WriteServerState("ServerState::ApplyHistory{InsertValue} ", cmd.Cell_.CellId_);
-                auto cellIt = Cells_.begin();
-                if (cmd.NearCellId_) {
-                    auto idIt = Ids_.find(cmd.NearCellId_);
-                    if (idIt == Ids_.end()) {
-                        log::WriteServerState("ServerState::ApplyHistory{can't find cell ", cmd.NearCellId_,"}");
-                    }
-                    cellIt = idIt->second;
-                    cellIt++;
-                }
-                Ids_[cmd.Cell_.CellId_] = Cells_.insert(cellIt, cmd.Cell_);
-                auto insertionId = PostponedInsertion_.find(cmd.NearCellId_);
-                if (insertionId == PostponedInsertion_.end()) {
-                    log::WriteServerState("ServerState::ApplyHistory{can't find waitedInsertion cell} ", cmd.NearCellId_);
-                }
-                log::WriteServerState("ServerState::ApplyHistory{pop from postponed} ", insertionId->second.back()->Cell_.CellId_);
-                insertionId->second.pop_back();
-                if (insertionId->second.empty()) {
-                    PostponedInsertion_.erase(insertionId);
-                    log::WriteServerState("ServerState::ApplyHistory{remove PostponedInsertion_} ", cmd.NearCellId_);
-                }
+                CellState &state = GetState(cmd.Cell_.CellId_);
+                state.Unref();
             }
-            if constexpr (std::is_same_v<type, api::GenericResponse::DeleteValue>) {
+            if constexpr (std::is_same_v<type, model::DeleteValue>) {
                 log::WriteServerState("ServerState::ApplyHistory{DeleteValue ", cmd.CellId_, "}");
-                auto idIt = Ids_.find(cmd.CellId_);
-                if (idIt == Ids_.end()) {
-                    log::WriteServerState("ServerState::ApplyHistory{can't find cell}");
-                    std::exit(1);
+                CellState &state = GetState(cmd.CellId_);
+                if (&state == Root_.NearLive_) {
+                    Root_.FindNear();
                 }
-                auto cellIt = idIt->second;
-                if (cellIt != Cells_.begin()) {
-                    cellIt--;
-                    log::WriteServerState("ServerState::ApplyHistory{left neigh} ", cellIt->CellId_);
-                    cellIt++;
-                } else {
-                    log::WriteServerState("ServerState::ApplyHistory{left neigh} ", 0);
+                state.Unref();
+                if (state.Next_->NearLive_ == &state) {
+                    state.Next_->SetNear(state.NearLive_);
                 }
-                Cells_.erase(cellIt);
-                log::WriteServerState("ServerState::ApplyHistory{erased from Cells_} ");
-                PostponedDeletion_.erase(cmd.CellId_);
-                log::WriteServerState("ServerState::ApplyHistory{erased from PostponedDeletion_} ");
-                Ids_.erase(cmd.CellId_);
-                log::WriteServerState("ServerState::ApplyHistory{erased from Ids_} ");
             }
         };
         if (_toIteration <= LastCutIteration_) {
@@ -344,7 +439,7 @@ struct ServerState : IServerState {
 
     }
 
-    void MoveIterationForClient(uint32_t _id, uint64_t _iteration) override {
+    void MoveIterationForClient(model::ClientId _id, model::IterationI _iteration) override {
         log::WriteServerState("ServerState::MoveIterationForClient ", _id, ' ', _iteration);
         auto it = LastSeenClients_.find(_id);
         if (it == LastSeenClients_.end()) {
@@ -357,7 +452,7 @@ struct ServerState : IServerState {
         log::WriteServerState("ServerState::MoveIterationForClient{Clean}");
         while (OrderedSeenClients_.size()) {
             auto [iteration, id] = OrderedSeenClients_.top();
-            uint64_t currentLastSeenIteration = LastSeenClients_[id];
+            model::IterationI currentLastSeenIteration = LastSeenClients_[id];
             if (currentLastSeenIteration == iteration) {
                 break;
             }
@@ -371,11 +466,14 @@ struct ServerState : IServerState {
     void CutHistory() override {
         log::WriteServerState("ServerState::CutHistory");
         if (OrderedSeenClients_.size()) {
-            uint64_t iteration = OrderedSeenClients_.top().first;
+            model::IterationI iteration = OrderedSeenClients_.top().first;
             if (iteration) {
                 log::WriteServerState("ServerState::CutHistory{ApplyHistory}");
                 ApplyHistory(OrderedSeenClients_.top().first);
             }
+        }
+        if (QueueToRemove_.size()) {
+            CleanQueue();
         }
     }
 };

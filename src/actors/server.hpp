@@ -13,6 +13,7 @@ namespace home_task::actors {
 struct ServerRunner {
     network_mock::NetworkClient Client_;
     std::unique_ptr<logic::IServerState> State_;
+    uint32_t Counter_ = 0;
 
     ServerRunner(network_mock::NetworkClient &&_client, std::unique_ptr<logic::IServerState> &&_state)
         : Client_(std::move(_client))

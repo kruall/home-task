@@ -29,9 +29,9 @@ enum class EAPIEventsType : uint32_t {
 struct LoadStateRequest {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::LoadStateRequest;
 
-    uint64_t PreviousIteration_ = 0;
+    model::IterationId PreviousIteration_ = 0;
 
-    LoadStateRequest(uint64_t _iteration)
+    LoadStateRequest(model::IterationId _iteration)
         : PreviousIteration_(_iteration)
     {}
 };
@@ -39,11 +39,11 @@ struct LoadStateRequest {
 struct UpdateValueRequest {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::UpdateValueRequest;
 
-    uint64_t PreviousIteration_ = 0;
-    uint64_t CellId_;
-    uint32_t Value_;
+    model::IterationId PreviousIteration_ = 0;
+    model::CellId CellId_;
+    model::Value Value_;
 
-    UpdateValueRequest(uint64_t _cellId, uint32_t _value, uint64_t _iteration)
+    UpdateValueRequest(model::CellId _cellId, model::Value _value, model::IterationId _iteration)
         : PreviousIteration_(_iteration)
         , CellId_(_cellId)
         , Value_(_value)
@@ -53,11 +53,11 @@ struct UpdateValueRequest {
 struct InsertValueRequest {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::InsertValueRequest;
 
-    uint64_t PreviousIteration_ = 0;
-    uint64_t NearCellId_;
-    uint32_t Value_;
+    model::IterationId PreviousIteration_ = 0;
+    model::CellId NearCellId_;
+    model::Value Value_;
 
-    InsertValueRequest(uint64_t _cellId, uint32_t _value, uint64_t _iteration)
+    InsertValueRequest(model::CellId _cellId, model::Value _value, model::IterationId _iteration)
         : PreviousIteration_(_iteration)
         , NearCellId_(_cellId)
         , Value_(_value)
@@ -67,10 +67,10 @@ struct InsertValueRequest {
 struct DeleteValueRequest {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::DeleteValueRequest;
 
-    uint64_t PreviousIteration_ = 0;
-    uint64_t CellId_;
+    model::IterationId PreviousIteration_ = 0;
+    model::CellId CellId_;
 
-    DeleteValueRequest(uint64_t _cellId, uint64_t _iteration)
+    DeleteValueRequest(model::CellId _cellId, model::IterationId _iteration)
         : PreviousIteration_(_iteration)
         , CellId_(_cellId)
     {}
@@ -79,32 +79,20 @@ struct DeleteValueRequest {
 struct SyncRequest {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::SyncRequest;
 
-    uint64_t PreviousIteration_ = 0;
+    model::IterationId PreviousIteration_ = 0;
 
-    SyncRequest(uint64_t _iteration)
+    SyncRequest(model::IterationId _iteration)
         : PreviousIteration_(_iteration)
     {}
 };
 
 struct GenericResponse {
-    struct UpdateValue {
-        model::Cell Cell_;
-    };
-    struct InsertValue {
-        uint64_t NearCellId_;
-        model::Cell Cell_;
-    };
-    struct DeleteValue {
-        uint64_t CellId_;
-    };
-    using Modification = std::variant<UpdateValue, InsertValue, DeleteValue>;
-
-    std::vector<Modification> Modificatoins_;
-    uint64_t Iteration_ = 0;
+    std::deque<model::UpdateValue> Updates_;
+    std::deque<model::InsertValue> Insertions_;
+    std::deque<model::DeleteValue> Deletions_;
+    model::IterationId Iteration_ = 0;
 
     GenericResponse() = default;
-    GenericResponse(std::vector<Modification> &&_modifications) : Modificatoins_(_modifications)
-    {}
 
     uint32_t CalculateSize() const;
 };
@@ -113,7 +101,7 @@ struct State : GenericResponse {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::State;
 
     std::vector<model::Cell> Cells_;
-    uint64_t Iteration_ = 0;
+    model::IterationId Iteration_ = 0;
 
     State(std::vector<model::Cell> &&_cells) : Cells_(std::move(_cells))
     {}
@@ -130,7 +118,7 @@ struct UpdateValueResponse : GenericResponse {
 struct InsertValueResponse : GenericResponse {
     static constexpr EAPIEventsType Type_ = EAPIEventsType::InsertValueResponse;
 
-    uint64_t CellId_;
+    model::CellId CellId_;
 
     InsertValueResponse(uint64_t _cellId)
         : CellId_(_cellId)

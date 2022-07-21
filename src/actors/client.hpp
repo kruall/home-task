@@ -14,14 +14,14 @@ namespace home_task::actors {
 struct ClientRunner {
     network_mock::NetworkClient Client_;
     std::unique_ptr<logic::IClientState> State_;
-    uint32_t Id_;
+    model::ClientId Id_;
 
     std::chrono::duration<double> WorkTime_;
     uint64_t IteratoinCount_ = 0;
     uint64_t SentBytes_ = 0;
     uint64_t ReceivedBytes_ = 0;
 
-    ClientRunner(network_mock::NetworkClient &&_client, std::unique_ptr<logic::IClientState> &&_state, uint32_t _id)
+    ClientRunner(network_mock::NetworkClient &&_client, std::unique_ptr<logic::IClientState> &&_state, model::ClientId _id)
         : Client_(std::move(_client))
         , State_(std::move(_state))
         , Id_(_id)

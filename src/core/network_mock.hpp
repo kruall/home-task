@@ -1,5 +1,6 @@
 #pragma once
 
+#include "model.hpp"
 #include "magic_numbers.hpp"
 #include "log.hpp"
 
@@ -27,8 +28,8 @@ enum class EMessageType : uint32_t {
 struct MessageRecord {
     uint32_t Type_;
     std::any Record_;
-    uint64_t Sender_;
-    uint64_t Size_ = 0;
+    model::ClientId Sender_;
+    uint32_t Size_ = 0;
 
     ~MessageRecord() {
         log::WriteDestructor("~MessageRecord");
@@ -99,13 +100,13 @@ public:
         log::WriteDestructor("~NetworkMock");
     }
 
-    void Send(uint64_t _receiver, uint64_t _sender, std::unique_ptr<MessageRecord> &&_msg);
+    void Send(model::ClientId _receiver, model::ClientId _sender, std::unique_ptr<MessageRecord> &&_msg);
 
-    std::optional<std::unique_ptr<MessageRecord>> Receive(uint64_t _mailbox);
+    std::optional<std::unique_ptr<MessageRecord>> Receive(model::ClientId _mailbox);
 
-    std::unique_ptr<MessageRecord> ReceiveWithWaiting(uint64_t _mailbox);
+    std::unique_ptr<MessageRecord> ReceiveWithWaiting(model::ClientId _mailbox);
 
-    void WaitMessage(uint64_t _mailbox);
+    void WaitMessage(model::ClientId _mailbox);
 
 };
 
@@ -114,9 +115,9 @@ class NetworkClient {
     uint64_t MailBox_;
 
 public:
-    NetworkClient(const std::shared_ptr<network_mock::NetworkMock> &_network, uint32_t _mailBox);
+    NetworkClient(const std::shared_ptr<network_mock::NetworkMock> &_network, model::ClientId _mailBox);
 
-    void Send(uint64_t _receiver, std::unique_ptr<MessageRecord> &&_msg);
+    void Send(model::ClientId _receiver, std::unique_ptr<MessageRecord> &&_msg);
 
     std::optional<std::unique_ptr<MessageRecord>> Receive();
 

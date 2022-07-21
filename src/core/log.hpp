@@ -39,6 +39,10 @@ void WriteFullStateLog(_Args&&... _args) {
     Logger<magic_numbers::WithFullStateLog>::Write(std::forward<_Args>(_args)...);
 }
 
+template <typename ... _Args>
+void WriteHistoryLog(_Args&&... _args) {
+    Logger<magic_numbers::WithHistoryLog>::Write(std::forward<_Args>(_args)...);
+}
 
 template <typename ... _Args>
 void WriteMutex(_Args&&... _args) {

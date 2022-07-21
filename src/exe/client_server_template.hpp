@@ -26,11 +26,10 @@ void Test() {
     {
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::uniform_int_distribution<uint32_t> idDistrib(1);
         std::uniform_int_distribution<uint32_t> valueDistrib(0);
         initCells.reserve(cellCount);
         for (uint64_t idx = 0; idx < cellCount; ++idx) {
-            initCells.emplace_back(idDistrib(gen), valueDistrib(gen));
+            initCells.emplace_back(idx +  1, valueDistrib(gen));
         }
     }
 

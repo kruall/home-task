@@ -10,7 +10,7 @@ NetworkMock::NetworkMock(uint32_t _mailBoxCount) {
     }
 }
 
-void NetworkMock::Send(uint64_t _receiver, uint64_t _sender, std::unique_ptr<MessageRecord> &&_msg) {
+void NetworkMock::Send(model::ClientId _receiver, model::ClientId _sender, std::unique_ptr<MessageRecord> &&_msg) {
     _msg->Sender_ = _sender;
     auto mailBox = MailBoxes_[_receiver].get();
     log::WriteMutex("NetworkMock::Send{lock queue mutex ", _receiver, '}');
@@ -21,7 +21,7 @@ void NetworkMock::Send(uint64_t _receiver, uint64_t _sender, std::unique_ptr<Mes
     log::WriteMutex("NetworkMock::Send{unlock queue mutex ", _receiver, '}');
 }
 
-std::optional<std::unique_ptr<MessageRecord>> NetworkMock::Receive(uint64_t _mailbox) {
+std::optional<std::unique_ptr<MessageRecord>> NetworkMock::Receive(model::ClientId _mailbox) {
     log::WriteMutex("NetworkMock::Receive{lock queue mutex ", _mailbox, '}');
     std::lock_guard<std::mutex> guard(MailBoxes_[_mailbox]->QueueMutex_);
     log::WriteMutex("NetworkMock::Receive{locked queue mutex ", _mailbox, '}');
@@ -35,7 +35,7 @@ std::optional<std::unique_ptr<MessageRecord>> NetworkMock::Receive(uint64_t _mai
     return msg;
 }
 
-std::unique_ptr<MessageRecord> NetworkMock::ReceiveWithWaiting(uint64_t _mailbox) {
+std::unique_ptr<MessageRecord> NetworkMock::ReceiveWithWaiting(model::ClientId _mailbox) {
     auto msg = Receive(_mailbox);
     while (!msg) {
         WaitMessage(_mailbox);
@@ -44,7 +44,7 @@ std::unique_ptr<MessageRecord> NetworkMock::ReceiveWithWaiting(uint64_t _mailbox
     return std::move(*msg);
 }
 
-void NetworkMock::WaitMessage(uint64_t _mailbox) {
+void NetworkMock::WaitMessage(model::ClientId _mailbox) {
     auto mailBox = MailBoxes_[_mailbox].get();
     log::WriteMutex("NetworkMock::Receive{lock notifier mutex ", _mailbox, '}');
     std::unique_lock<std::mutex> lock(mailBox->NotifierMutex_);
@@ -53,13 +53,13 @@ void NetworkMock::WaitMessage(uint64_t _mailbox) {
     log::WriteMutex("NetworkMock::Receive{unlock notifier mutex ", _mailbox, '}');
 }
 
-NetworkClient::NetworkClient(const std::shared_ptr<network_mock::NetworkMock> &_network, uint32_t _mailBox)
+NetworkClient::NetworkClient(const std::shared_ptr<network_mock::NetworkMock> &_network, model::ClientId _mailBox)
     : Network_(_network)
     , MailBox_(_mailBox)
 {}
 
 
-void NetworkClient::Send(uint64_t _receiver, std::unique_ptr<MessageRecord> &&_msg) {
+void NetworkClient::Send(model::ClientId _receiver, std::unique_ptr<MessageRecord> &&_msg) {
     log::WriteNetwork("NetworkClient::Send ", MailBox_, "->", _receiver);
     Network_->Send(_receiver, MailBox_, std::move(_msg));
 }

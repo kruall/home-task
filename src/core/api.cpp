@@ -9,12 +9,9 @@ uint32_t State::CalculateSize() const {
 
 uint32_t GenericResponse::CalculateSize() const {
     uint32_t acc = 0;
-    auto getSize = [] (const auto &el) {
-        return sizeof(decltype(el));
-    };
-    for (auto &el : Modificatoins_) {
-        acc += std::visit(getSize, el);
-    }
+    acc += Insertions_.size() * sizeof(model::InsertValue);
+    acc += Updates_.size() * sizeof(model::UpdateValue);
+    acc += Deletions_.size() * sizeof(model::DeleteValue);
     return acc;
 }
 
