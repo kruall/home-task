@@ -8,8 +8,8 @@ namespace home_task::magic_numbers {
 constexpr uint64_t ServerId = 0;
 
 constexpr bool WithSizeCalculation = true;
-constexpr bool CalculateFirstLoadState = true;
-constexpr bool WithStateChecking = true;
+constexpr bool CalculateFirstLoadState = false;
+constexpr bool WithStateChecking = false;
 constexpr bool WithDelayedHistory= false;
 
 constexpr bool FastSwith = false;
@@ -30,7 +30,7 @@ constexpr bool WithInitLog = false;
 constexpr bool WithFullStateLog = FastSwith;
 constexpr bool WithHistoryLog = FastSwith;
 
-constexpr bool UserSendLoadState = true;
+constexpr bool UserSendLoadState = false;
 constexpr bool UserSendSync = true;
 
 }
